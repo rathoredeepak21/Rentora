@@ -172,12 +172,17 @@ export function decorateTenantBills(
 ): Bill[] {
   if (!Array.isArray(bills) || bills.length === 0) return [];
 
-  // Sort oldest first by billingMonth
+  // Sort oldest first chronologically: billingMonth -> billNumber -> createdAt
   const sorted = [...bills].sort((a, b) => {
     const monthA = a.billingMonth || '';
     const monthB = b.billingMonth || '';
     if (monthA !== monthB) {
       return monthA.localeCompare(monthB);
+    }
+    const numA = a.billNumber || '';
+    const numB = b.billNumber || '';
+    if (numA && numB && numA !== numB) {
+      return numA.localeCompare(numB);
     }
     const createdA = a.createdAt || '';
     const createdB = b.createdAt || '';
@@ -202,27 +207,33 @@ export function decorateTenantBills(
   availablePaymentPool = Math.max(availablePaymentPool, sumRecordedBills);
 
   let remainingPaymentPool = availablePaymentPool;
-  let accumulatedDue = 0;
 
   const decoratedOldestFirst = sorted.map((bill, index) => {
     const isClosed = isBillClosedOrPaid(bill);
 
+    // Current bill charges (subtotal)
+    const subtotal = bill.subtotal !== undefined
+      ? Number(bill.subtotal) || 0
+      : (Number(bill.rent) || 0) +
+        (Number(bill.electricityCharge) || 0) +
+        (Number(bill.waterCharge) || 0) +
+        (Number(bill.parkingCharge) || 0) +
+        (Number(bill.maintenanceCharge) || 0) +
+        (Number(bill.otherCharges) || 0);
+
+    // PRESERVE PREVIOUS DUE: Each bill retains its own recorded previous arrears
+    // Previous Outstanding Due + Current Bill = Total Payable
+    const previousDue = Math.max(0, Number(bill.previousDue) || 0);
+    const totalAmount = subtotal + previousDue;
+
     // If bill is already closed/paid, lock it from any recalculation or payment allocation!
     if (isClosed) {
-      const paidAmount = Number(bill.paidAmount) || Number(bill.totalAmount) || 0;
-      const totalAmount = Number(bill.totalAmount) || paidAmount;
-      const prevDue = Number(bill.previousDue) || 0;
-      const prevDuePaid = Math.min(prevDue, paidAmount);
-      const subtotal = bill.subtotal !== undefined
-        ? Number(bill.subtotal) || 0
-        : Math.max(0, totalAmount - prevDue);
+      const paidAmount = Number(bill.paidAmount) || totalAmount;
+      const prevDuePaid = Math.min(previousDue, paidAmount);
       const curPaid = Math.max(0, paidAmount - prevDuePaid);
 
       // Deduct this bill's paid amount from the available payment pool
       remainingPaymentPool = Math.max(0, remainingPaymentPool - paidAmount);
-
-      // A fully paid historical bill has 0 remaining due, so 0 carries forward
-      accumulatedDue = 0;
 
       const prevLabel = bill.monthWiseAccounting?.previousMonthLabel ||
         (index > 0 && sorted[index - 1]?.billingMonth
@@ -230,9 +241,9 @@ export function decorateTenantBills(
           : (bill.billingMonth ? `${getPreviousMonthDisplay(bill.billingMonth)} (Arrears)` : 'Previous Month / Arrears'));
 
       const monthWiseAccounting: MonthWiseAccounting = {
-        hasPreviousDue: prevDue > 0,
+        hasPreviousDue: previousDue > 0,
         previousMonthLabel: prevLabel,
-        previousMonthOriginal: prevDue,
+        previousMonthOriginal: previousDue,
         previousMonthPaid: prevDuePaid,
         previousMonthRemaining: 0,
         previousMonthStatus: 'paid',
@@ -251,7 +262,7 @@ export function decorateTenantBills(
       return {
         ...bill,
         subtotal,
-        previousDue: prevDue,
+        previousDue,
         totalAmount,
         paidAmount,
         remainingAmount: 0,
@@ -265,55 +276,45 @@ export function decorateTenantBills(
     }
 
     // Bill is open (unpaid or partial)
-    let effectivePreviousDue = accumulatedDue;
-    if (index === 0 && effectivePreviousDue === 0 && (Number(bill.previousDue) || 0) > 0) {
-      effectivePreviousDue = Number(bill.previousDue) || 0;
+    // If this is the first/standalone bill and has manual previousDue, allocate payment to previousDue first
+    let previousDuePaid = 0;
+    let previousDueRemaining = previousDue;
+
+    if (index === 0 && previousDue > 0) {
+      previousDuePaid = Math.min(previousDue, remainingPaymentPool);
+      previousDueRemaining = Math.max(0, previousDue - previousDuePaid);
+      remainingPaymentPool = Math.max(0, remainingPaymentPool - previousDuePaid);
+    } else {
+      // For index > 0, prior bills in the array already consumed the payment pool for older dues
+      previousDuePaid = 0;
+      previousDueRemaining = previousDue;
     }
 
-    const subtotal = bill.subtotal !== undefined
-      ? Number(bill.subtotal) || 0
-      : (Number(bill.rent) || 0) +
-        (Number(bill.electricityCharge) || 0) +
-        (Number(bill.waterCharge) || 0) +
-        (Number(bill.parkingCharge) || 0) +
-        (Number(bill.maintenanceCharge) || 0) +
-        (Number(bill.otherCharges) || 0);
-
-    // 1. FIRST clear the oldest previous due/arrears from the available payment pool
-    const previousDuePaid = Math.min(effectivePreviousDue, remainingPaymentPool);
-    const previousDueRemaining = Math.max(0, effectivePreviousDue - previousDuePaid);
-    remainingPaymentPool = Math.max(0, remainingPaymentPool - previousDuePaid);
-
-    // 2. THEN apply remaining payment to current month bill
+    // Apply remaining payment pool to this bill's own charges (oldest open bill first)
     const currentBillPaid = Math.min(subtotal, remainingPaymentPool);
     const currentBillRemaining = Math.max(0, subtotal - currentBillPaid);
     remainingPaymentPool = Math.max(0, remainingPaymentPool - currentBillPaid);
 
-    // Total paid and outstanding for this bill statement
-    const totalApprovedPaid = previousDuePaid + currentBillPaid;
-    const totalOutstanding = previousDueRemaining + currentBillRemaining;
-    const totalPayable = effectivePreviousDue + subtotal;
+    const paidAmount = index === 0 && previousDue > 0 ? (previousDuePaid + currentBillPaid) : currentBillPaid;
+    const remainingAmount = index === 0 && previousDue > 0 ? (previousDueRemaining + currentBillRemaining) : currentBillRemaining;
 
     // Payment status for this bill
     let paymentStatus: PaymentStatus = 'unpaid';
-    if (totalOutstanding === 0 && totalPayable > 0) {
+    if (remainingAmount === 0 && totalAmount > 0) {
       paymentStatus = 'paid';
-    } else if (totalApprovedPaid > 0) {
+    } else if (paidAmount > 0) {
       paymentStatus = 'partial';
     }
-
-    // Carry forward the remaining balance to the next bill
-    accumulatedDue = totalOutstanding;
 
     const prevStatus: PaymentStatus = previousDueRemaining === 0 ? 'paid' : (previousDuePaid > 0 ? 'partial' : 'unpaid');
     const curStatus: PaymentStatus = currentBillRemaining === 0 ? 'paid' : (currentBillPaid > 0 ? 'partial' : 'unpaid');
 
     const monthWiseAccounting: MonthWiseAccounting = {
-      hasPreviousDue: effectivePreviousDue > 0,
+      hasPreviousDue: previousDue > 0,
       previousMonthLabel: index > 0 && sorted[index - 1]?.billingMonth
         ? formatMonthDisplay(sorted[index - 1].billingMonth)
         : (bill.billingMonth ? `${getPreviousMonthDisplay(bill.billingMonth)} (Arrears)` : 'Previous Month / Arrears'),
-      previousMonthOriginal: effectivePreviousDue,
+      previousMonthOriginal: previousDue,
       previousMonthPaid: previousDuePaid,
       previousMonthRemaining: previousDueRemaining,
       previousMonthStatus: prevStatus,
@@ -324,24 +325,24 @@ export function decorateTenantBills(
       currentMonthRemaining: currentBillRemaining,
       currentMonthStatus: curStatus,
 
-      overallTotalPayable: totalPayable,
-      overallTotalPaid: totalApprovedPaid,
-      overallTotalRemaining: totalOutstanding,
+      overallTotalPayable: totalAmount,
+      overallTotalPaid: paidAmount,
+      overallTotalRemaining: remainingAmount,
     };
 
     return {
       ...bill,
-      subtotal: subtotal,
-      previousDue: effectivePreviousDue,
-      totalAmount: totalPayable,
-      paidAmount: totalApprovedPaid,
-      remainingAmount: totalOutstanding,
-      paymentStatus: paymentStatus,
-      previousDuePaid: previousDuePaid,
-      previousDueRemaining: previousDueRemaining,
-      currentBillPaid: currentBillPaid,
-      currentBillRemaining: currentBillRemaining,
-      monthWiseAccounting: monthWiseAccounting,
+      subtotal,
+      previousDue,
+      totalAmount,
+      paidAmount,
+      remainingAmount,
+      paymentStatus,
+      previousDuePaid,
+      previousDueRemaining,
+      currentBillPaid,
+      currentBillRemaining,
+      monthWiseAccounting,
     } as Bill;
   });
 
@@ -351,6 +352,11 @@ export function decorateTenantBills(
     const monthB = b.billingMonth || '';
     if (monthA !== monthB) {
       return monthB.localeCompare(monthA);
+    }
+    const numA = a.billNumber || '';
+    const numB = b.billNumber || '';
+    if (numA && numB && numA !== numB) {
+      return numB.localeCompare(numA);
     }
     const createdA = a.createdAt || '';
     const createdB = b.createdAt || '';

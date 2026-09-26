@@ -2,7 +2,7 @@
   "expo": {
     "name": "Rentora Tenant",
     "slug": "rentora-tenant",
-    "version": "1.1.5",
+    "version": "1.1.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "rentoratenant",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.rentora.tenant",
-      "versionCode": 6,
+      "versionCode": 7,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#0F172A",

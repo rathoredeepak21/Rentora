@@ -213,6 +213,66 @@ assert(febDec.paidAmount === 4500 && febDec.remainingAmount === 0 && febDec.paym
 assert(marDec.paidAmount === 1000 && marDec.remainingAmount === 4000 && marDec.paymentStatus === 'partial',
   `TEST 13: March PARTIAL (1000 paid / 4000 rem / partial)`);
 
+// =========================================================================
+// USER PROMPT TEST CASES: PRESERVE PREVIOUS DUE & MULTI-BILL ISOLATION
+// =========================================================================
+
+// USER PROMPT TEST 1: Previous due 3000 + Current bill 5300 => Total payable = 8300
+const promptBill1 = { id: 'inv-1', billNumber: 'INV-2026-00001', billingMonth: '2026-09', subtotal: 5300, previousDue: 3000 };
+const promptDec1 = decorateTenantBills([promptBill1]);
+assert(promptDec1[0].totalAmount === 8300, `PROMPT TEST 1: Total payable = ${promptDec1[0].totalAmount} (expected 8300)`);
+assert(promptDec1[0].previousDue === 3000, `PROMPT TEST 1: previousDue = ${promptDec1[0].previousDue} (expected 3000)`);
+assert(promptDec1[0].subtotal === 5300, `PROMPT TEST 1: subtotal = ${promptDec1[0].subtotal} (expected 5300)`);
+
+// USER PROMPT TEST 2: Previous due 3000, Current bill 5300, Payment 4000
+// Expected: Previous = PAID (3000 paid, 0 rem), Current = PARTIAL (1000 paid, 4300 rem), Overall remaining = 4300
+const prevBillTest2 = { id: 'inv-prev-2', billNumber: 'INV-2026-00001', billingMonth: '2026-08', subtotal: 3000, previousDue: 0 };
+const curBillTest2 = { id: 'inv-cur-2', billNumber: 'INV-2026-00002', billingMonth: '2026-09', subtotal: 5300, previousDue: 3000 };
+const paymentsTest2 = [{ id: 'pay-t2', billId: 'inv-cur-2', amount: 4000, status: 'approved' }];
+const decTest2 = decorateTenantBills([prevBillTest2, curBillTest2], paymentsTest2);
+const prevDecTest2 = decTest2.find(b => b.id === 'inv-prev-2');
+const curDecTest2 = decTest2.find(b => b.id === 'inv-cur-2');
+assert(prevDecTest2.paidAmount === 3000 && prevDecTest2.remainingAmount === 0 && prevDecTest2.paymentStatus === 'paid',
+  `PROMPT TEST 2: Previous bill PAID (3000 paid, 0 rem, paid)`);
+assert(curDecTest2.paidAmount === 1000 && curDecTest2.remainingAmount === 4300 && curDecTest2.paymentStatus === 'partial',
+  `PROMPT TEST 2: Current bill PARTIAL (1000 paid, 4300 rem, partial)`);
+assert(prevDecTest2.remainingAmount + curDecTest2.remainingAmount === 4300,
+  `PROMPT TEST 2: Overall remaining = 4300`);
+
+// USER PROMPT TEST 3: Previous due 3000, Current bill 5300, Payment 8300
+// Expected: Previous = PAID, Current = PAID, Overall remaining = 0
+const paymentsTest3 = [{ id: 'pay-t3', billId: 'inv-cur-2', amount: 8300, status: 'approved' }];
+const decTest3 = decorateTenantBills([prevBillTest2, curBillTest2], paymentsTest3);
+const prevDecTest3 = decTest3.find(b => b.id === 'inv-prev-2');
+const curDecTest3 = decTest3.find(b => b.id === 'inv-cur-2');
+assert(prevDecTest3.paidAmount === 3000 && prevDecTest3.remainingAmount === 0 && prevDecTest3.paymentStatus === 'paid',
+  `PROMPT TEST 3: Previous bill PAID (3000 paid, 0 rem, paid)`);
+assert(curDecTest3.paidAmount === 5300 && curDecTest3.remainingAmount === 0 && curDecTest3.paymentStatus === 'paid',
+  `PROMPT TEST 3: Current bill PAID (5300 paid, 0 rem, paid)`);
+assert(prevDecTest3.remainingAmount + curDecTest3.remainingAmount === 0,
+  `PROMPT TEST 3: Overall remaining = 0`);
+
+// USER PROMPT TEST 4: Previous due 0, Current bill 5300 => Total payable = 5300
+const promptBill4 = { id: 'inv-4', billNumber: 'INV-2026-00004', billingMonth: '2026-09', subtotal: 5300, previousDue: 0 };
+const promptDec4 = decorateTenantBills([promptBill4]);
+assert(promptDec4[0].totalAmount === 5300, `PROMPT TEST 4: Total payable = ${promptDec4[0].totalAmount} (expected 5300)`);
+
+// USER PROMPT TEST 5: Current bill 5300 (with previousDue 3000, total 8300), Later/future bill 5200
+// Expected: Current bill's total must NOT become 10,500 merely because another bill exists
+const curBill5 = { id: 'inv-2', billNumber: 'INV-2026-00002', billingMonth: '2026-09', subtotal: 5300, previousDue: 3000 };
+const futureBill5 = { id: 'inv-3', billNumber: 'INV-2026-00003', billingMonth: '2026-09', subtotal: 5200, previousDue: 0 };
+const decTest5 = decorateTenantBills([curBill5, futureBill5]);
+const inv2Result = decTest5.find(b => b.id === 'inv-2');
+const inv3Result = decTest5.find(b => b.id === 'inv-3');
+assert(inv2Result.totalAmount === 8300, `PROMPT TEST 5: INV-00002 total = ${inv2Result.totalAmount} (expected 8300, MUST NOT BE 10500)`);
+assert(inv3Result.totalAmount === 5200, `PROMPT TEST 5: INV-00003 total = ${inv3Result.totalAmount} (expected 5200)`);
+
+// USER PROMPT TEST 6: Previous due 3000, Current bill 5300, App refresh/restart => Total payable remains 8300
+const decTest6First = decorateTenantBills([curBill5]);
+const decTest6Second = decorateTenantBills([curBill5]);
+assert(decTest6First[0].totalAmount === 8300 && decTest6Second[0].totalAmount === 8300,
+  `PROMPT TEST 6: Total payable remains stable at 8300 after refresh (no double counting)`);
+
 console.log('\n==================================================');
 if (allPassed) {
   console.log('🎉 ALL TESTS PASSED SUCCESSFULLY!');

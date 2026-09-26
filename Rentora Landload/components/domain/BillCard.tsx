@@ -75,6 +75,11 @@ export const BillCard = memo<BillCardProps>(({
         <View style={styles.amountCol}>
           <Text style={styles.amountLabel}>Total Due</Text>
           <MoneyText amount={bill.totalAmount} variant="bold" style={styles.amountValue} />
+          {bill.previousDue > 0 && (
+            <Text style={styles.prevDueHint} numberOfLines={1}>
+              (₹{bill.subtotal || (bill.totalAmount - bill.previousDue)} + ₹{bill.previousDue} Prev)
+            </Text>
+          )}
         </View>
       </View>
 
@@ -170,6 +175,12 @@ const getStyles = (colors: any) => StyleSheet.create({
     fontSize: typography.sizes.md,
     color: colors.primary,
     marginTop: 2,
+  },
+  prevDueHint: {
+    fontSize: typography.sizes.xs - 2,
+    color: colors.textSecondary,
+    marginTop: 2,
+    textAlign: 'right',
   },
   partialFooter: {
     backgroundColor: colors.warningLight,

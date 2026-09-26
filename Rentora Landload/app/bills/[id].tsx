@@ -241,8 +241,15 @@ _Generated via Rentora App._`;
             <Text style={styles.dueDateText}>Due Date: {formatBillDate(bill.dueDate)}</Text>
           </View>
           <View style={styles.totalBlock}>
-            <Text style={styles.totalLabel}>Total Bill Amount</Text>
+            <Text style={styles.totalLabel}>Total Payable</Text>
             <MoneyText amount={bill.totalAmount} style={styles.totalValue} variant="highlight" />
+            {bill.previousDue > 0 && (
+              <View style={styles.totalBreakdownSubBlock}>
+                <Text style={styles.totalBreakdownSubText}>
+                  Current Bill: ₹{bill.subtotal || (bill.totalAmount - bill.previousDue)} + Previous Due: ₹{bill.previousDue}
+                </Text>
+              </View>
+            )}
           </View>
 
           {bill.paidAmount > 0 && (
@@ -661,6 +668,16 @@ const getStyles = (colors: any) => StyleSheet.create({
   totalValue: {
     fontSize: typography.sizes.xxl,
     marginTop: 4,
+  },
+  totalBreakdownSubBlock: {
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  totalBreakdownSubText: {
+    fontSize: typography.sizes.xs,
+    color: colors.primary,
+    fontWeight: typography.weights.semibold,
+    textAlign: 'center',
   },
   balanceSummary: {
     width: '100%',

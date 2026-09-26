@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import db from '../../utils/db';
 import { Tenant, Bill } from '../../types';
-import { billService, decorateBills } from '../../services/billService';
+import { billService, decorateBills, sortBillsChronological, isBillClosedOrPaid } from '../../services/billService';
 import { formatShortBillDate, parseDateSafely } from '../../utils/date';
 
 export default function CreateBillScreen() {
@@ -202,9 +202,10 @@ export default function CreateBillScreen() {
         // Calculate outstanding balance from previous bills (true arrears carried over from latest bill)
         const tenantBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === unitTenant.id);
         const decorated = decorateBills(tenantBills);
-        const sortedDecorated = [...decorated].sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
+        const sortedDecorated = sortBillsChronological(decorated);
         const latestDecorated = sortedDecorated.length > 0 ? sortedDecorated[sortedDecorated.length - 1] : null;
-        const outstanding = latestDecorated ? (latestDecorated.remainingAmount || 0) : 0;
+        // If latest bill is already paid, previous due is 0. Otherwise carry its actual outstanding balance.
+        const outstanding = latestDecorated && !isBillClosedOrPaid(latestDecorated) ? (latestDecorated.remainingAmount || 0) : 0;
         setPreviousDue(String(outstanding));
       } catch (e) {
         console.error(e);
@@ -258,9 +259,10 @@ export default function CreateBillScreen() {
         // Calculate outstanding balance from previous bills (true arrears carried over from latest bill)
         const tenantBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === activeTenant.id);
         const decorated = decorateBills(tenantBills);
-        const sortedDecorated = [...decorated].sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
+        const sortedDecorated = sortBillsChronological(decorated);
         const latestDecorated = sortedDecorated.length > 0 ? sortedDecorated[sortedDecorated.length - 1] : null;
-        const outstanding = latestDecorated ? (latestDecorated.remainingAmount || 0) : 0;
+        // If latest bill is already paid, previous due is 0. Otherwise carry its actual outstanding balance.
+        const outstanding = latestDecorated && !isBillClosedOrPaid(latestDecorated) ? (latestDecorated.remainingAmount || 0) : 0;
         setPreviousDue(String(outstanding));
       };
       loadReadingsOnly();
