@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Rentora Tenant",
+    "slug": "rentora-tenant",
+    "version": "1.1.3",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "rentoratenant",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rentora.tenant"
+    },
+    "android": {
+      "package": "com.rentora.tenant",
+      "versionCode": 4,
+      "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A",
+        "foregroundImage": "./assets/icon.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-font",
+      "expo-notifications"
+    ]
+  }
+}

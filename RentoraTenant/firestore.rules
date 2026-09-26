@@ -1,0 +1,127 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is owner of the document
+    function isOwner(resourceData) {
+      return isAuthenticated() && request.auth.uid == resourceData.ownerId;
+    }
+    
+    // Helper function to check if new document belongs to creator (Landlord)
+    function isCreatingOwnDoc() {
+      return isAuthenticated() && request.auth.uid == request.resource.data.ownerId;
+    }
+
+    // Helper to check if caller is the authenticated tenant for this record
+    function isAssignedTenant(resourceData) {
+      return isAuthenticated() && (
+        (resourceData.tenantAuthUid != null && request.auth.uid == resourceData.tenantAuthUid) ||
+        (resourceData.tenantId != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == resourceData.tenantId)
+      );
+    }
+
+    // Properties Collection
+    match /properties/{propertyId} {
+      allow read: if isOwner(resource.data) || 
+        (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.propertyId == propertyId);
+      allow create: if isCreatingOwnDoc();
+      allow update: if isOwner(resource.data) && request.auth.uid == request.resource.data.ownerId;
+      allow delete: if isOwner(resource.data);
+    }
+
+    // Units Collection
+    match /units/{unitId} {
+      allow read: if isOwner(resource.data) ||
+        (isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.unitId == unitId);
+      allow create: if isCreatingOwnDoc();
+      allow update: if isOwner(resource.data) && request.auth.uid == request.resource.data.ownerId;
+      allow delete: if isOwner(resource.data);
+    }
+
+    // Tenants Collection
+    match /tenants/{tenantId} {
+      allow read: if isOwner(resource.data) || 
+        (isAuthenticated() && resource.data.tenantAuthUid == request.auth.uid);
+      allow create: if isCreatingOwnDoc();
+      allow update: if isOwner(resource.data) || (isAuthenticated() && resource.data.tenantAuthUid == request.auth.uid);
+      allow delete: if isOwner(resource.data);
+    }
+
+    // Bills Collection
+    match /bills/{billId} {
+      allow read: if isOwner(resource.data) || isAssignedTenant(resource.data);
+      allow create: if isCreatingOwnDoc();
+      allow update: if isOwner(resource.data);
+      allow delete: if isOwner(resource.data);
+    }
+
+    // Payments Collection
+    match /payments/{paymentId} {
+      allow read: if isOwner(resource.data) || isAssignedTenant(resource.data);
+      allow create: if isCreatingOwnDoc() || (
+        isAuthenticated() && 
+        request.resource.data.tenantAuthUid == request.auth.uid &&
+        request.resource.data.status == 'pending'
+      );
+      allow update: if isOwner(resource.data);
+      allow delete: if isOwner(resource.data);
+    }
+
+    // Notifications Collection (Tenant & Landlord Push & In-app Notifications)
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (
+        resource.data.tenantAuthUid == request.auth.uid ||
+        resource.data.recipientUserId == request.auth.uid ||
+        (resource.data.tenantId != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == resource.data.tenantId) ||
+        (resource.data.ownerId != null && resource.data.ownerId == request.auth.uid)
+      );
+      allow update: if isAuthenticated() && (
+        resource.data.tenantAuthUid == request.auth.uid ||
+        resource.data.recipientUserId == request.auth.uid ||
+        (resource.data.tenantId != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == resource.data.tenantId) ||
+        (resource.data.ownerId != null && resource.data.ownerId == request.auth.uid)
+      ) && request.resource.data.isRead == true;
+      allow create: if isAuthenticated();
+      allow delete: if isAuthenticated() && (
+        resource.data.tenantAuthUid == request.auth.uid ||
+        resource.data.recipientUserId == request.auth.uid ||
+        resource.data.ownerId == request.auth.uid
+      );
+    }
+
+    // Settings Collection (Doc ID is landlord owner UID)
+    match /settings/{userId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ownerId == userId)
+      );
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Users Collection (Doc ID is user UID)
+    match /users/{userId} {
+      // Users can read their own profile; Landlords can read/create/update tenant profiles for their tenants
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        (resource.data.ownerId != null && resource.data.ownerId == request.auth.uid)
+      );
+      allow create: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        request.resource.data.ownerId == request.auth.uid
+      );
+      allow update: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        (resource.data.ownerId != null && resource.data.ownerId == request.auth.uid)
+      );
+      allow delete: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        (resource.data.ownerId != null && resource.data.ownerId == request.auth.uid)
+      );
+    }
+  }
+}

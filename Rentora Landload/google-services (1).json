@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "293604785108",
+    "project_id": "rentora-31c64",
+    "storage_bucket": "rentora-31c64.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:293604785108:android:6bc6705b7f4035ab3eb441",
+        "android_client_info": {
+          "package_name": "com.rentora.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "293604785108-9nuqge0k8srp34qnqvovrrudvnvaijag.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.rentora.app",
+            "certificate_hash": "e440f55f1a40fea54a37d41b6c5b0ed34277e021"
+          }
+        },
+        {
+          "client_id": "293604785108-8b7h5mvi25i85rt5d9sb76j6o6u3d6t3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCw3dCHIdgOQPSJEvVX2u0oy2DZ7ZMCmec"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "293604785108-8b7h5mvi25i85rt5d9sb76j6o6u3d6t3.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

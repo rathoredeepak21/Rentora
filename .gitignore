@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Expo
+.expo/
+**/.expo/
+dist/
+**/dist/
+web-build/
+**/web-build/
+expo-env.d.ts
+**/expo-env.d.ts
+
+# Android build outputs & caches
+.gradle/
+**/.gradle/
+build/
+**/build/
+.cxx/
+**/.cxx/
+.kotlin/
+**/.kotlin/
+
+# Machine-specific paths
+local.properties
+**/local.properties
+
+# Binary builds
+*.apk
+*.aab
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+
+# Logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log

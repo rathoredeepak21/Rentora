@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native build outputs
+android/.gradle/
+android/app/build/
+android/build/
+android/.cxx/
+android/.kotlin/
+*.apk
+*.aab
+
+# machine-specific
+local.properties
+android/local.properties
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+
+# typescript
+*.tsbuildinfo

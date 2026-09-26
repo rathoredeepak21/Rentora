@@ -1,0 +1,148 @@
+// Test suite for Rentora Billing and Payment Allocation Logic
+
+const { calculateBillAllocation, decorateTenantBills } = require('../billingAllocation.ts');
+
+let allPassed = true;
+function assert(condition, message) {
+  if (!condition) {
+    console.error(`❌ FAILED: ${message}`);
+    allPassed = false;
+  } else {
+    console.log(`✅ PASSED: ${message}`);
+  }
+}
+
+console.log('==================================================');
+console.log('RUNNING RENTORA BILLING ALLOCATION VERIFICATION SUITE');
+console.log('==================================================\n');
+
+// TEST 1: User's Required Exact Scenario (3000 arrears + 5390 current bill, 5400 paid)
+const t1 = calculateBillAllocation({ subtotal: 5390, previousDue: 3000, billingMonth: '2026-09' }, 5400);
+assert(t1.totalOutstanding === 2990, `TEST 1: Outstanding = ${t1.totalOutstanding} (expected 2990)`);
+assert(t1.previousDuePaid === 3000, `TEST 1: previousDuePaid = ${t1.previousDuePaid} (expected 3000)`);
+assert(t1.previousDueRemaining === 0, `TEST 1: previousDueRemaining = ${t1.previousDueRemaining} (expected 0)`);
+assert(t1.currentBillPaid === 2400, `TEST 1: currentBillPaid = ${t1.currentBillPaid} (expected 2400)`);
+assert(t1.currentBillRemaining === 2990, `TEST 1: currentBillRemaining = ${t1.currentBillRemaining} (expected 2990)`);
+
+// Month-Wise Accounting verification for TEST 1
+const m1 = t1.monthWiseAccounting;
+assert(m1.hasPreviousDue === true, `TEST 1 (MWA): hasPreviousDue is true`);
+assert(m1.previousMonthOriginal === 3000, `TEST 1 (MWA): previousMonthOriginal = ${m1.previousMonthOriginal} (expected 3000)`);
+assert(m1.previousMonthPaid === 3000, `TEST 1 (MWA): previousMonthPaid = ${m1.previousMonthPaid} (expected 3000)`);
+assert(m1.previousMonthRemaining === 0, `TEST 1 (MWA): previousMonthRemaining = ${m1.previousMonthRemaining} (expected 0)`);
+assert(m1.previousMonthStatus === 'paid', `TEST 1 (MWA): previousMonthStatus = ${m1.previousMonthStatus} (expected 'paid')`);
+assert(m1.currentMonthOriginal === 5390, `TEST 1 (MWA): currentMonthOriginal = ${m1.currentMonthOriginal} (expected 5390)`);
+assert(m1.currentMonthPaid === 2400, `TEST 1 (MWA): currentMonthPaid = ${m1.currentMonthPaid} (expected 2400)`);
+assert(m1.currentMonthRemaining === 2990, `TEST 1 (MWA): currentMonthRemaining = ${m1.currentMonthRemaining} (expected 2990)`);
+assert(m1.currentMonthStatus === 'partial', `TEST 1 (MWA): currentMonthStatus = ${m1.currentMonthStatus} (expected 'partial')`);
+assert(m1.overallTotalPayable === 8390, `TEST 1 (MWA): overallTotalPayable = ${m1.overallTotalPayable} (expected 8390)`);
+assert(m1.overallTotalPaid === 5400, `TEST 1 (MWA): overallTotalPaid = ${m1.overallTotalPaid} (expected 5400)`);
+assert(m1.overallTotalRemaining === 2990, `TEST 1 (MWA): overallTotalRemaining = ${m1.overallTotalRemaining} (expected 2990)`);
+
+// TEST 2: Exact payment covering only previous due (3000 paid)
+const t2 = calculateBillAllocation({ subtotal: 5390, previousDue: 3000 }, 3000);
+assert(t2.totalOutstanding === 5390, `TEST 2: Outstanding = ${t2.totalOutstanding} (expected 5390)`);
+assert(t2.previousDuePaid === 3000, `TEST 2: previousDuePaid = ${t2.previousDuePaid} (expected 3000)`);
+assert(t2.monthWiseAccounting.previousMonthStatus === 'paid', `TEST 2: previousMonthStatus = paid`);
+assert(t2.monthWiseAccounting.currentMonthPaid === 0, `TEST 2: currentMonthPaid = 0`);
+assert(t2.monthWiseAccounting.currentMonthStatus === 'unpaid', `TEST 2: currentMonthStatus = unpaid`);
+
+// TEST 3: Partial payment of 1000 (Prompt Partial Payment Example)
+const t3 = calculateBillAllocation({ subtotal: 5390, previousDue: 3000 }, 1000);
+assert(t3.totalOutstanding === 7390, `TEST 3: Outstanding = ${t3.totalOutstanding} (expected 7390)`);
+assert(t3.previousDuePaid === 1000, `TEST 3: previousDuePaid = ${t3.previousDuePaid} (expected 1000)`);
+assert(t3.previousDueRemaining === 2000, `TEST 3: previousDueRemaining = ${t3.previousDueRemaining} (expected 2000)`);
+assert(t3.monthWiseAccounting.previousMonthStatus === 'partial', `TEST 3: previousMonthStatus = partial`);
+assert(t3.currentBillPaid === 0, `TEST 3: currentBillPaid = ${t3.currentBillPaid} (expected 0)`);
+assert(t3.monthWiseAccounting.currentMonthStatus === 'unpaid', `TEST 3: currentMonthStatus = unpaid`);
+
+// TEST 4: Full payment of 8390 (Prompt Full Payment Example)
+const t4 = calculateBillAllocation({ subtotal: 5390, previousDue: 3000 }, 8390);
+assert(t4.totalOutstanding === 0, `TEST 4: Outstanding = ${t4.totalOutstanding} (expected 0)`);
+assert(t4.paymentStatus === 'paid', `TEST 4: paymentStatus = ${t4.paymentStatus} (expected 'paid')`);
+assert(t4.monthWiseAccounting.previousMonthStatus === 'paid', `TEST 4: previousMonthStatus = paid`);
+assert(t4.monthWiseAccounting.currentMonthStatus === 'paid', `TEST 4: currentMonthStatus = paid`);
+assert(t4.previousDueRemaining === 0, `TEST 4: previousDueRemaining = 0`);
+assert(t4.currentBillRemaining === 0, `TEST 4: currentBillRemaining = 0`);
+
+// TEST 5: Prompt Multiple Older Bills Example
+// Jan remaining = 1000, Feb remaining = 2000, March current = 5000. Tenant pays 4000.
+const billsT5 = [
+  { id: 'b1', billingMonth: '2026-01', subtotal: 1000, previousDue: 0, rent: 1000 },
+  { id: 'b2', billingMonth: '2026-02', subtotal: 2000, previousDue: 0, rent: 2000 },
+  { id: 'b3', billingMonth: '2026-03', subtotal: 5000, previousDue: 0, rent: 5000 },
+];
+// Total approved payment pool: 4000
+const paymentsT5 = [
+  { id: 'p-pool', billId: 'b3', amount: 4000, status: 'approved' },
+];
+const decoratedT5 = decorateTenantBills(billsT5, paymentsT5);
+const b1Result = decoratedT5.find(b => b.id === 'b1');
+const b2Result = decoratedT5.find(b => b.id === 'b2');
+const b3Result = decoratedT5.find(b => b.id === 'b3');
+
+assert(b1Result.paidAmount === 1000 && b1Result.remainingAmount === 0 && b1Result.paymentStatus === 'paid',
+  `TEST 5: Jan Paid = 1000, Rem = 0, Status = PAID`);
+assert(b2Result.paidAmount === 2000 && b2Result.remainingAmount === 0 && b2Result.paymentStatus === 'paid',
+  `TEST 5: Feb Paid = 2000, Rem = 0, Status = PAID`);
+assert(b3Result.currentBillPaid === 1000 && b3Result.remainingAmount === 4000 && b3Result.paymentStatus === 'partial',
+  `TEST 5: March Paid = 1000, Rem = 4000, Status = PARTIAL`);
+
+// TEST 6: Multiple partial payments totaling 5400 for 8390
+const billsT6 = [{ id: 'b-main', billingMonth: '2026-04', subtotal: 5390, previousDue: 3000, rent: 4500, electricityCharge: 890 }];
+const paymentsT6 = [
+  { id: 'p6-1', billId: 'b-main', amount: 2000, status: 'approved' },
+  { id: 'p6-2', billId: 'b-main', amount: 3400, status: 'approved' },
+];
+const decoratedT6 = decorateTenantBills(billsT6, paymentsT6);
+assert(decoratedT6[0].remainingAmount === 2990, `TEST 6: Outstanding = ${decoratedT6[0].remainingAmount} (expected 2990)`);
+assert(decoratedT6[0].paidAmount === 5400, `TEST 6: paidAmount = ${decoratedT6[0].paidAmount} (expected 5400)`);
+assert(decoratedT6[0].previousDuePaid === 3000, `TEST 6: previousDuePaid = ${decoratedT6[0].previousDuePaid} (expected 3000)`);
+assert(decoratedT6[0].currentBillPaid === 2400, `TEST 6: currentBillPaid = ${decoratedT6[0].currentBillPaid} (expected 2400)`);
+
+// TEST 7: Rejected payment must NOT reduce outstanding
+const paymentsT7 = [
+  { id: 'p7-1', billId: 'b-main', amount: 5400, status: 'rejected' },
+];
+const decoratedT7 = decorateTenantBills(billsT6, paymentsT7);
+assert(decoratedT7[0].remainingAmount === 8390, `TEST 7: Outstanding = ${decoratedT7[0].remainingAmount} (expected 8390)`);
+assert(decoratedT7[0].paidAmount === 0, `TEST 7: paidAmount = ${decoratedT7[0].paidAmount} (expected 0)`);
+
+// TEST 8: Pending payment must NOT permanently reduce outstanding
+const paymentsT8 = [
+  { id: 'p8-1', billId: 'b-main', amount: 5400, status: 'pending' },
+];
+const decoratedT8 = decorateTenantBills(billsT6, paymentsT8);
+assert(decoratedT8[0].remainingAmount === 8390, `TEST 8: Outstanding = ${decoratedT8[0].remainingAmount} (expected 8390)`);
+assert(decoratedT8[0].paidAmount === 0, `TEST 8: paidAmount = ${decoratedT8[0].paidAmount} (expected 0)`);
+
+// TEST 9: Landlord App & Tenant App produce identical output
+const landlordBill = {
+  id: 'b-shared',
+  billingMonth: '2026-05',
+  subtotal: 5390,
+  previousDue: 3000,
+  paidAmount: 5400,
+  totalAmount: 8390,
+};
+const tenantAlloc = calculateBillAllocation(landlordBill, 5400);
+const totalAmountL = landlordBill.subtotal + landlordBill.previousDue;
+const paidAmountL = 5400;
+const remainingL = Math.max(0, totalAmountL - paidAmountL);
+assert(tenantAlloc.totalOutstanding === remainingL, `TEST 9: Tenant (${tenantAlloc.totalOutstanding}) == Landlord (${remainingL})`);
+assert(tenantAlloc.totalOutstanding === 2990, `TEST 9: Value is 2990`);
+
+// TEST 10: PDF remaining balance calculation
+const pdfAlloc = calculateBillAllocation({ subtotal: 5390, previousDue: 3000, paidAmount: 5400 });
+assert(pdfAlloc.totalOutstanding === 2990, `TEST 10: PDF Remaining Balance = ${pdfAlloc.totalOutstanding} (expected 2990)`);
+assert(pdfAlloc.previousDuePaid === 3000, `TEST 10: PDF previousDuePaid = ${pdfAlloc.previousDuePaid} (expected 3000)`);
+assert(pdfAlloc.currentBillPaid === 2400, `TEST 10: PDF currentBillPaid = ${pdfAlloc.currentBillPaid} (expected 2400)`);
+
+console.log('\n==================================================');
+if (allPassed) {
+  console.log('🎉 ALL TESTS PASSED SUCCESSFULLY!');
+} else {
+  console.error('💥 SOME TESTS FAILED!');
+  process.exit(1);
+}
+console.log('==================================================');
