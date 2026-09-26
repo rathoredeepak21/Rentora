@@ -1,6 +1,6 @@
 import db from '../utils/db';
 import { Payment, Bill, Tenant, PaymentVerificationStatus } from '../types';
-import { billService, decorateBills } from './billService';
+import { billService, decorateBills, isBillClosedOrPaid } from './billService';
 import { notificationService } from './notificationService';
 
 const COLLECTION = 'payments';
@@ -87,31 +87,39 @@ export const paymentService = {
     // 2. Fetch all bills of this tenant
     const allBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
     const decoratedBills = decorateBills(allBills);
-    const outstandingBills = decoratedBills.filter((b) => b.remainingAmount > 0);
-    outstandingBills.sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
+    
+    // CRITICAL: Filter out any bill that is already closed or fully paid (remainingAmount <= 0 or status == 'paid')
+    // Old paid bills must NEVER receive any payment allocation!
+    const outstandingBills = decoratedBills
+      .filter((b) => !isBillClosedOrPaid(b) && (Number(b.remainingAmount) || 0) > 0)
+      .sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
 
-    let remainingPayment = payment.amount;
+    let remainingPayment = Number(payment.amount) || 0;
     const parentPaymentId = payment.parentPaymentId || 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
 
-    // 3. Apply payment sequentially to outstanding bills
+    // 3. Apply payment sequentially to outstanding bills only
     for (const bill of outstandingBills) {
       if (remainingPayment <= 0) break;
 
-      const needed = bill.remainingAmount;
+      const needed = Number(bill.remainingAmount) || 0;
+      if (needed <= 0) continue;
       const allocatedAmount = Math.min(remainingPayment, needed);
 
-      const newPaidAmount = bill.paidAmount + allocatedAmount;
-      const newRemainingAmount = Math.max(0, bill.totalAmount - newPaidAmount);
+      const currentPaid = Number(bill.paidAmount) || 0;
+      const newPaidAmount = currentPaid + allocatedAmount;
+      const totalAmt = Number(bill.totalAmount) || (Number(bill.subtotal || 0) + Number(bill.previousDue || 0));
+      const newRemainingAmount = Math.max(0, totalAmt - newPaidAmount);
       
-      const prevDue = bill.previousDue || 0;
+      const prevDue = Number(bill.previousDue) || 0;
       const prevDuePaid = Math.min(prevDue, newPaidAmount);
       const prevDueRemaining = Math.max(0, prevDue - prevDuePaid);
       const remForCurrent = Math.max(0, newPaidAmount - prevDuePaid);
-      const curPaid = Math.min(bill.subtotal || 0, remForCurrent);
-      const curRemaining = Math.max(0, (bill.subtotal || 0) - curPaid);
+      const sub = Number(bill.subtotal) || Math.max(0, totalAmt - prevDue);
+      const curPaid = Math.min(sub, remForCurrent);
+      const curRemaining = Math.max(0, sub - curPaid);
 
       let newStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
-      if (newRemainingAmount === 0) {
+      if (newRemainingAmount === 0 && totalAmt > 0) {
         newStatus = 'paid';
       } else if (newPaidAmount > 0) {
         newStatus = 'partial';
@@ -289,33 +297,41 @@ export const paymentService = {
     // 2. Fetch all bills of this tenant
     const allBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
     const decoratedBills = decorateBills(allBills);
-    const outstandingBills = decoratedBills.filter((b) => b.remainingAmount > 0);
-    outstandingBills.sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
+    
+    // CRITICAL: Filter out any bill that is already closed or fully paid (remainingAmount <= 0 or status == 'paid')
+    // Old paid bills must NEVER receive any payment allocation!
+    const outstandingBills = decoratedBills
+      .filter((b) => !isBillClosedOrPaid(b) && (Number(b.remainingAmount) || 0) > 0)
+      .sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
 
-    let remainingPayment = payment.amount;
+    let remainingPayment = Number(payment.amount) || 0;
     const parentPaymentId = 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
     let mainPaymentRef: Payment | null = null;
     const nowIso = new Date().toISOString();
 
-    // 3. Apply payment sequentially to outstanding bills
+    // 3. Apply payment sequentially to outstanding bills only
     for (const bill of outstandingBills) {
       if (remainingPayment <= 0) break;
 
-      const needed = bill.remainingAmount;
+      const needed = Number(bill.remainingAmount) || 0;
+      if (needed <= 0) continue;
       const allocatedAmount = Math.min(remainingPayment, needed);
 
-      const newPaidAmount = bill.paidAmount + allocatedAmount;
-      const newRemainingAmount = Math.max(0, bill.totalAmount - newPaidAmount);
+      const currentPaid = Number(bill.paidAmount) || 0;
+      const newPaidAmount = currentPaid + allocatedAmount;
+      const totalAmt = Number(bill.totalAmount) || (Number(bill.subtotal || 0) + Number(bill.previousDue || 0));
+      const newRemainingAmount = Math.max(0, totalAmt - newPaidAmount);
 
-      const prevDue = bill.previousDue || 0;
+      const prevDue = Number(bill.previousDue) || 0;
       const prevDuePaid = Math.min(prevDue, newPaidAmount);
       const prevDueRemaining = Math.max(0, prevDue - prevDuePaid);
       const remForCurrent = Math.max(0, newPaidAmount - prevDuePaid);
-      const curPaid = Math.min(bill.subtotal || 0, remForCurrent);
-      const curRemaining = Math.max(0, (bill.subtotal || 0) - curPaid);
+      const sub = Number(bill.subtotal) || Math.max(0, totalAmt - prevDue);
+      const curPaid = Math.min(sub, remForCurrent);
+      const curRemaining = Math.max(0, sub - curPaid);
 
       let newStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
-      if (newRemainingAmount === 0) {
+      if (newRemainingAmount === 0 && totalAmt > 0) {
         newStatus = 'paid';
       } else if (newPaidAmount > 0) {
         newStatus = 'partial';

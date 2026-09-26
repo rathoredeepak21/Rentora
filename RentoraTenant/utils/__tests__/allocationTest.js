@@ -138,6 +138,81 @@ assert(pdfAlloc.totalOutstanding === 2990, `TEST 10: PDF Remaining Balance = ${p
 assert(pdfAlloc.previousDuePaid === 3000, `TEST 10: PDF previousDuePaid = ${pdfAlloc.previousDuePaid} (expected 3000)`);
 assert(pdfAlloc.currentBillPaid === 2400, `TEST 10: PDF currentBillPaid = ${pdfAlloc.currentBillPaid} (expected 2400)`);
 
+// =========================================================================
+// USER SPECIFICATION TEST CASES: HISTORICAL PAID BILLS MUST NEVER BE MODIFIED
+// =========================================================================
+
+// TEST 11: USER PRIMARY SCENARIO (Old bill PAID 3000/3000 + Current bill PARTIAL 2400/5390 + 1000 payment)
+const oldBillUser = {
+  id: 'b-old',
+  billingMonth: '2026-01',
+  subtotal: 3000,
+  totalAmount: 3000,
+  paidAmount: 3000,
+  remainingAmount: 0,
+  paymentStatus: 'paid',
+};
+const currentBillUser = {
+  id: 'b-current',
+  billingMonth: '2026-02',
+  subtotal: 5390,
+  totalAmount: 5390,
+  paidAmount: 2400,
+  remainingAmount: 2990,
+  paymentStatus: 'partial',
+};
+// Total approved payment pool: 3000 (old) + 2400 (cur partial) + 1000 (new) = 6400
+const paymentsUser1000 = [
+  { id: 'p-1', billId: 'b-old', amount: 3000, status: 'approved' },
+  { id: 'p-2', billId: 'b-current', amount: 2400, status: 'approved' },
+  { id: 'p-3', billId: 'b-current', amount: 1000, status: 'approved' },
+];
+const decoratedUser = decorateTenantBills([oldBillUser, currentBillUser], paymentsUser1000);
+const oldDecorated = decoratedUser.find(b => b.id === 'b-old');
+const curDecorated = decoratedUser.find(b => b.id === 'b-current');
+
+assert(oldDecorated.paidAmount === 3000, `TEST 11 (User Scenario): Old Bill Paid = ${oldDecorated.paidAmount} (expected 3000, MUST NOT BE 4000)`);
+assert(oldDecorated.remainingAmount === 0, `TEST 11 (User Scenario): Old Bill Remaining = ${oldDecorated.remainingAmount} (expected 0)`);
+assert(oldDecorated.paymentStatus === 'paid', `TEST 11 (User Scenario): Old Bill Status = ${oldDecorated.paymentStatus} (expected 'paid')`);
+assert(curDecorated.paidAmount === 3400, `TEST 11 (User Scenario): Current Bill Paid = ${curDecorated.paidAmount} (expected 3400)`);
+assert(curDecorated.remainingAmount === 1990, `TEST 11 (User Scenario): Current Bill Remaining = ${curDecorated.remainingAmount} (expected 1990)`);
+assert(curDecorated.paymentStatus === 'partial', `TEST 11 (User Scenario): Current Bill Status = ${curDecorated.paymentStatus} (expected 'partial')`);
+
+// TEST 12: USER SCENARIO 2 (Tenant pays 2990 clearing the current bill)
+const paymentsUser2990 = [
+  { id: 'p-1', billId: 'b-old', amount: 3000, status: 'approved' },
+  { id: 'p-2', billId: 'b-current', amount: 2400, status: 'approved' },
+  { id: 'p-3', billId: 'b-current', amount: 2990, status: 'approved' },
+];
+const decoratedUser2 = decorateTenantBills([oldBillUser, currentBillUser], paymentsUser2990);
+const oldDec2 = decoratedUser2.find(b => b.id === 'b-old');
+const curDec2 = decoratedUser2.find(b => b.id === 'b-current');
+assert(oldDec2.paidAmount === 3000 && oldDec2.remainingAmount === 0 && oldDec2.paymentStatus === 'paid',
+  `TEST 12: Old Bill completely untouched at 3000 paid / 0 rem / paid`);
+assert(curDec2.paidAmount === 5390 && curDec2.remainingAmount === 0 && curDec2.paymentStatus === 'paid',
+  `TEST 12: Current Bill fully cleared at 5390 paid / 0 rem / paid`);
+
+// TEST 13: USER MULTIPLE BILL SCENARIO (Jan PAID 4000, Feb PARTIAL 2000/4500, Mar UNPAID 5000 + 3500 payment)
+const billJan = { id: 'b-jan', billingMonth: '2026-01', subtotal: 4000, totalAmount: 4000, paidAmount: 4000, remainingAmount: 0, paymentStatus: 'paid' };
+const billFeb = { id: 'b-feb', billingMonth: '2026-02', subtotal: 4500, totalAmount: 4500, paidAmount: 2000, remainingAmount: 2500, paymentStatus: 'partial' };
+const billMar = { id: 'b-mar', billingMonth: '2026-03', subtotal: 5000, totalAmount: 5000, paidAmount: 0, remainingAmount: 5000, paymentStatus: 'unpaid' };
+const paymentsMulti = [
+  { id: 'p-jan', billId: 'b-jan', amount: 4000, status: 'approved' },
+  { id: 'p-feb', billId: 'b-feb', amount: 2000, status: 'approved' },
+  { id: 'p-new', billId: 'b-feb', amount: 3500, status: 'approved' },
+];
+const decoratedMulti = decorateTenantBills([billJan, billFeb, billMar], paymentsMulti);
+const janDec = decoratedMulti.find(b => b.id === 'b-jan');
+const febDec = decoratedMulti.find(b => b.id === 'b-feb');
+const marDec = decoratedMulti.find(b => b.id === 'b-mar');
+
+assert(janDec.paidAmount === 4000 && janDec.remainingAmount === 0 && janDec.paymentStatus === 'paid',
+  `TEST 13: January UNCHANGED (4000 paid / 0 rem / paid)`);
+assert(febDec.paidAmount === 4500 && febDec.remainingAmount === 0 && febDec.paymentStatus === 'paid',
+  `TEST 13: February PAID (4500 paid / 0 rem / paid)`);
+assert(marDec.paidAmount === 1000 && marDec.remainingAmount === 4000 && marDec.paymentStatus === 'partial',
+  `TEST 13: March PARTIAL (1000 paid / 4000 rem / partial)`);
+
 console.log('\n==================================================');
 if (allPassed) {
   console.log('🎉 ALL TESTS PASSED SUCCESSFULLY!');

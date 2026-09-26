@@ -199,10 +199,12 @@ export default function CreateBillScreen() {
           setCurrentMeterReading('');
         }
 
-        // Calculate outstanding balance from previous bills
+        // Calculate outstanding balance from previous bills (true arrears carried over from latest bill)
         const tenantBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === unitTenant.id);
         const decorated = decorateBills(tenantBills);
-        const outstanding = decorated.reduce((sum, b) => sum + (b.remainingAmount || 0), 0);
+        const sortedDecorated = [...decorated].sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
+        const latestDecorated = sortedDecorated.length > 0 ? sortedDecorated[sortedDecorated.length - 1] : null;
+        const outstanding = latestDecorated ? (latestDecorated.remainingAmount || 0) : 0;
         setPreviousDue(String(outstanding));
       } catch (e) {
         console.error(e);
@@ -253,10 +255,12 @@ export default function CreateBillScreen() {
           setCurrentMeterReading('');
         }
 
-        // Calculate outstanding balance from previous bills
+        // Calculate outstanding balance from previous bills (true arrears carried over from latest bill)
         const tenantBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === activeTenant.id);
         const decorated = decorateBills(tenantBills);
-        const outstanding = decorated.reduce((sum, b) => sum + (b.remainingAmount || 0), 0);
+        const sortedDecorated = [...decorated].sort((a, b) => (a.billingMonth || '').localeCompare(b.billingMonth || ''));
+        const latestDecorated = sortedDecorated.length > 0 ? sortedDecorated[sortedDecorated.length - 1] : null;
+        const outstanding = latestDecorated ? (latestDecorated.remainingAmount || 0) : 0;
         setPreviousDue(String(outstanding));
       };
       loadReadingsOnly();

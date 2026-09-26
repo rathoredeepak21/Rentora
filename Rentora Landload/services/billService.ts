@@ -5,6 +5,14 @@ import { notificationService } from './notificationService';
 
 const COLLECTION = 'bills';
 
+export const isBillClosedOrPaid = (bill: Bill): boolean => {
+  if (!bill) return false;
+  if (bill.paymentStatus === 'paid') return true;
+  if (bill.remainingAmount !== undefined && Number(bill.remainingAmount) <= 0 && Number(bill.paidAmount || 0) > 0) return true;
+  if (bill.totalAmount !== undefined && bill.paidAmount !== undefined && Number(bill.totalAmount) > 0 && Number(bill.paidAmount) >= Number(bill.totalAmount)) return true;
+  return false;
+};
+
 export const decorateBills = (tenantBills: Bill[]): Bill[] => {
   if (!Array.isArray(tenantBills)) return [];
   // Sort oldest first by billingMonth
@@ -13,18 +21,52 @@ export const decorateBills = (tenantBills: Bill[]): Bill[] => {
   let accumulatedDue = 0;
   
   return sorted.map((bill, index) => {
-    // If accumulated from prior bills, use it. If first bill and has manual previousDue, preserve it.
+    const isClosed = isBillClosedOrPaid(bill);
+
+    // If bill is already closed/paid, lock it from any recalculation or payment allocation!
+    if (isClosed) {
+      const paidAmount = Number(bill.paidAmount) || Number(bill.totalAmount) || 0;
+      const totalAmount = Number(bill.totalAmount) || paidAmount;
+      const prevDue = Number(bill.previousDue) || 0;
+      const prevDuePaid = Math.min(prevDue, paidAmount);
+      const sub = bill.subtotal !== undefined
+        ? Number(bill.subtotal)
+        : Math.max(0, totalAmount - prevDue);
+      const curPaid = Math.max(0, paidAmount - prevDuePaid);
+
+      // A fully paid historical bill has 0 remaining due, so it carries forward 0 due
+      accumulatedDue = 0;
+
+      return {
+        ...bill,
+        previousDue: prevDue,
+        subtotal: sub,
+        totalAmount,
+        paidAmount,
+        remainingAmount: 0,
+        paymentStatus: 'paid' as const,
+        previousDuePaid: prevDuePaid,
+        previousDueRemaining: 0,
+        currentBillPaid: curPaid,
+        currentBillRemaining: 0,
+      };
+    }
+
+    // Bill is open (unpaid or partial)
+    // If accumulated arrears from prior open bills exist, carry it forward.
+    // If first bill and has manual previousDue, use it.
+    // Otherwise, previousDue is 0 (an already-paid previous bill never generates dues).
     let previousDue = accumulatedDue;
-    if (index === 0 && previousDue === 0 && (bill.previousDue || 0) > 0) {
+    if (index === 0 && previousDue === 0 && (Number(bill.previousDue) || 0) > 0) {
       previousDue = Number(bill.previousDue) || 0;
     }
 
     const sub = bill.subtotal !== undefined 
-      ? bill.subtotal 
+      ? Number(bill.subtotal) 
       : ((bill.rent || 0) + (bill.electricityCharge || 0) + (bill.waterCharge || 0) + (bill.parkingCharge || 0) + (bill.maintenanceCharge || 0) + (bill.otherCharges || 0));
       
     const totalAmount = sub + previousDue;
-    const paidAmount = bill.paidAmount || 0;
+    const paidAmount = Number(bill.paidAmount) || 0;
     const remainingAmount = Math.max(0, totalAmount - paidAmount);
     
     // Chronological payment allocation:
@@ -38,7 +80,7 @@ export const decorateBills = (tenantBills: Bill[]): Bill[] => {
     const currentBillRemaining = Math.max(0, sub - currentBillPaid);
 
     let paymentStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
-    if (remainingAmount === 0) {
+    if (remainingAmount === 0 && totalAmount > 0) {
       paymentStatus = 'paid';
     } else if (paidAmount > 0) {
       paymentStatus = 'partial';
@@ -49,7 +91,9 @@ export const decorateBills = (tenantBills: Bill[]): Bill[] => {
     return {
       ...bill,
       previousDue,
+      subtotal: sub,
       totalAmount,
+      paidAmount,
       remainingAmount,
       paymentStatus,
       previousDuePaid,
