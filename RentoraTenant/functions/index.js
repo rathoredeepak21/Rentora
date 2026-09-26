@@ -691,17 +691,6 @@ exports.sendBillDueReminders = functions.https.onCall(async (data, context) => {
   return { success: true, processedCount: count };
 });
 
-/**
- * Scheduled: Run daily at 9:00 AM IST to send rent due reminders
- */
-exports.scheduledBillDueCheck = functions.pubsub
-  .schedule('0 9 * * *')
-  .timeZone('Asia/Kolkata')
-  .onRun(async () => {
-    const count = await processBillDueReminders();
-    console.log(`[scheduledBillDueCheck] Sent ${count} due/overdue reminders.`);
-    return null;
-  });
 
 /**
  * ============================================================================

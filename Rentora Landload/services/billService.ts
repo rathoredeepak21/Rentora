@@ -1,6 +1,7 @@
 import db from '../utils/db';
 import { Bill, Payment } from '../types';
 import { localStorageService } from './localStorageService';
+import { notificationService } from './notificationService';
 
 const COLLECTION = 'bills';
 
@@ -163,7 +164,62 @@ export const billService = {
       tenantAuthUid: tenantAuthUid || null,
     };
     
-    return db.addDoc<Bill>(COLLECTION, data);
+    const newBill = await db.addDoc<Bill>(COLLECTION, data);
+
+    // Dispatch notification to tenant (in-app + Android status-bar push)
+    try {
+      const month = bill.billingMonth || '';
+      const tenantTitle = 'New Rent Bill';
+      const tenantBody = `Your ${month} rent bill is ready.`;
+
+      await db.addDoc('notifications', {
+        recipientUserId: tenantAuthUid || '',
+        tenantId: bill.tenantId,
+        tenantAuthUid: tenantAuthUid || '',
+        ownerId: bill.ownerId,
+        type: 'new_bill',
+        notificationType: 'new_bill',
+        title: tenantTitle,
+        message: tenantBody,
+        body: tenantBody,
+        relatedBillId: newBill.id,
+        billId: newBill.id,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      });
+
+      const tokenSet = new Set<string>();
+      const tenantDoc = await db.getDoc<any>('tenants', bill.tenantId);
+      if (tenantDoc && Array.isArray(tenantDoc.notificationTokens)) {
+        tenantDoc.notificationTokens.forEach((t: string) => t && tokenSet.add(t));
+      }
+      if (tenantAuthUid) {
+        const uDoc = await db.getDoc<any>('users', tenantAuthUid);
+        if (uDoc && Array.isArray(uDoc.notificationTokens)) {
+          uDoc.notificationTokens.forEach((t: string) => t && tokenSet.add(t));
+        }
+      }
+
+      if (tokenSet.size > 0) {
+        await notificationService.sendPushNotificationDirect({
+          tokens: Array.from(tokenSet),
+          title: tenantTitle,
+          body: tenantBody,
+          data: {
+            type: 'new_bill',
+            notificationType: 'new_bill',
+            billId: newBill.id,
+            tenantId: bill.tenantId,
+            billingMonth: month,
+            amount: String(bill.totalAmount || 0),
+          },
+        });
+      }
+    } catch (notifErr) {
+      console.warn('Tenant notification on bill create skipped:', notifErr);
+    }
+
+    return newBill;
   },
 
   async updateBill(id: string, bill: Partial<Bill>): Promise<Bill> {

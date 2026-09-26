@@ -23,6 +23,7 @@ import {
   TenantDocument 
 } from '../types';
 import { calculateBillAllocation, decorateTenantBills } from '../utils/billingAllocation';
+import { notificationService } from './notificationService';
 
 export const tenantDataService = {
   /**
@@ -322,7 +323,88 @@ export const tenantDataService = {
 
     const docRef = await addDoc(collection(db, 'payments'), dataData);
 
-    // Create event notification for the tenant
+    // 1. Fetch tenant name & unit info for accurate notification content
+    let tenantName = 'Tenant';
+    let unitLabel = 'Room';
+    try {
+      if (payment.tenantId) {
+        const tSnap = await getDoc(doc(db, 'tenants', payment.tenantId));
+        if (tSnap.exists()) {
+          const tData = tSnap.data();
+          if (tData.name) tenantName = tData.name.trim();
+          const uId = payment.unitId || tData.unitId;
+          if (uId) {
+            const uSnap = await getDoc(doc(db, 'units', uId));
+            if (uSnap.exists() && uSnap.data().unitNumber) {
+              const uNum = uSnap.data().unitNumber;
+              unitLabel = isNaN(Number(uNum)) ? uNum : `Room ${uNum}`;
+            }
+          }
+        }
+      }
+    } catch (infoErr) {
+      console.warn('Could not fetch tenant/unit info for payment notification:', infoErr);
+    }
+
+    const formattedAmount = Number(payment.amount).toLocaleString('en-IN');
+    const landlordTitle = 'New Payment Submitted';
+    const landlordBody = `${tenantName} submitted a payment of ₹${formattedAmount} for ${unitLabel}.`;
+
+    // 2. Create in-app notification for the landlord
+    try {
+      if (payment.ownerId) {
+        await addDoc(collection(db, 'notifications'), {
+          recipientUserId: payment.ownerId,
+          ownerId: payment.ownerId,
+          tenantId: payment.tenantId || '',
+          type: 'payment_submitted',
+          notificationType: 'payment_submitted',
+          title: landlordTitle,
+          message: landlordBody,
+          body: landlordBody,
+          relatedPaymentId: docRef.id,
+          relatedBillId: payment.billId || '',
+          relatedTenantId: payment.tenantId || '',
+          relatedPropertyId: payment.propertyId || '',
+          isRead: false,
+          createdAt: nowIso,
+        });
+      }
+    } catch (landlordNotifErr) {
+      console.warn('Landlord notification creation skipped:', landlordNotifErr);
+    }
+
+    // 3. Dispatch instant Android status-bar push notification to landlord
+    try {
+      if (payment.ownerId) {
+        const ownerSnap = await getDoc(doc(db, 'users', payment.ownerId));
+        if (ownerSnap.exists()) {
+          const ownerData = ownerSnap.data();
+          const landlordTokens: string[] = Array.isArray(ownerData.notificationTokens)
+            ? ownerData.notificationTokens
+            : [];
+          if (landlordTokens.length > 0) {
+            await notificationService.sendPushNotificationDirect({
+              tokens: landlordTokens,
+              title: landlordTitle,
+              body: landlordBody,
+              data: {
+                type: 'payment_submitted',
+                notificationType: 'payment_submitted',
+                paymentId: docRef.id,
+                billId: payment.billId || '',
+                tenantId: payment.tenantId || '',
+                amount: String(payment.amount),
+              },
+            });
+          }
+        }
+      }
+    } catch (pushErr) {
+      console.warn('Landlord push dispatch skipped:', pushErr);
+    }
+
+    // 4. Create in-app notification for the tenant
     try {
       await addDoc(collection(db, 'notifications'), {
         tenantId: payment.tenantId,
@@ -330,7 +412,7 @@ export const tenantDataService = {
         ownerId: payment.ownerId,
         notificationType: 'payment_submitted',
         title: '💳 Payment Submitted',
-        body: `Your payment of ₹${payment.amount.toLocaleString('en-IN')} (UTR: ${payment.transactionId.trim()}) has been submitted and is awaiting landlord verification.`,
+        body: `Your payment of ₹${formattedAmount} (UTR: ${payment.transactionId.trim()}) has been submitted and is awaiting landlord verification.`,
         relatedBillId: payment.billId,
         relatedPaymentId: docRef.id,
         isRead: false,

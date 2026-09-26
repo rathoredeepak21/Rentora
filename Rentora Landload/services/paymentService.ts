@@ -1,6 +1,7 @@
 import db from '../utils/db';
 import { Payment, Bill, Tenant, PaymentVerificationStatus } from '../types';
 import { billService, decorateBills } from './billService';
+import { notificationService } from './notificationService';
 
 const COLLECTION = 'payments';
 
@@ -145,6 +146,59 @@ export const paymentService = {
       parentPaymentId,
     });
 
+    // 6. Dispatch notification to tenant (in-app + Android status-bar push)
+    try {
+      const formattedAmount = Number(payment.amount || 0).toLocaleString('en-IN');
+      const tenantTitle = 'Payment Approved';
+      const tenantBody = `Your payment of ₹${formattedAmount} has been approved.`;
+      const tenantAuthUid = payment.tenantAuthUid || tenant.tenantAuthUid || '';
+
+      await db.addDoc('notifications', {
+        recipientUserId: tenantAuthUid,
+        tenantId: payment.tenantId,
+        tenantAuthUid,
+        ownerId: payment.ownerId,
+        type: 'payment_approved',
+        notificationType: 'payment_approved',
+        title: tenantTitle,
+        message: tenantBody,
+        body: tenantBody,
+        relatedPaymentId: paymentId,
+        relatedBillId: payment.billId || '',
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      });
+
+      const tokenSet = new Set<string>();
+      if (Array.isArray(tenant.notificationTokens)) {
+        tenant.notificationTokens.forEach((t: string) => t && tokenSet.add(t));
+      }
+      if (tenantAuthUid) {
+        const uDoc = await db.getDoc<any>('users', tenantAuthUid);
+        if (uDoc && Array.isArray(uDoc.notificationTokens)) {
+          uDoc.notificationTokens.forEach((t: string) => t && tokenSet.add(t));
+        }
+      }
+
+      if (tokenSet.size > 0) {
+        await notificationService.sendPushNotificationDirect({
+          tokens: Array.from(tokenSet),
+          title: tenantTitle,
+          body: tenantBody,
+          data: {
+            type: 'payment_approved',
+            notificationType: 'payment_approved',
+            paymentId,
+            billId: payment.billId || '',
+            tenantId: payment.tenantId,
+            amount: String(payment.amount),
+          },
+        });
+      }
+    } catch (notifErr) {
+      console.warn('Tenant notification on approval skipped:', notifErr);
+    }
+
     return updatedPayment;
   },
 
@@ -163,6 +217,60 @@ export const paymentService = {
       rejectedAt: new Date().toISOString(),
       rejectionReason: reason || 'Payment rejected by landlord.',
     });
+
+    // Dispatch notification to tenant (in-app + Android status-bar push)
+    try {
+      const formattedAmount = Number(payment.amount || 0).toLocaleString('en-IN');
+      const tenantTitle = 'Payment Rejected';
+      const tenantBody = `Your payment of ₹${formattedAmount} was rejected. Please check your payment details.`;
+      const tenant = await db.getDoc<Tenant>('tenants', payment.tenantId);
+      const tenantAuthUid = payment.tenantAuthUid || tenant?.tenantAuthUid || '';
+
+      await db.addDoc('notifications', {
+        recipientUserId: tenantAuthUid,
+        tenantId: payment.tenantId,
+        tenantAuthUid,
+        ownerId: payment.ownerId,
+        type: 'payment_rejected',
+        notificationType: 'payment_rejected',
+        title: tenantTitle,
+        message: tenantBody,
+        body: tenantBody,
+        relatedPaymentId: paymentId,
+        relatedBillId: payment.billId || '',
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      });
+
+      const tokenSet = new Set<string>();
+      if (tenant && Array.isArray(tenant.notificationTokens)) {
+        tenant.notificationTokens.forEach((t: string) => t && tokenSet.add(t));
+      }
+      if (tenantAuthUid) {
+        const uDoc = await db.getDoc<any>('users', tenantAuthUid);
+        if (uDoc && Array.isArray(uDoc.notificationTokens)) {
+          uDoc.notificationTokens.forEach((t: string) => t && tokenSet.add(t));
+        }
+      }
+
+      if (tokenSet.size > 0) {
+        await notificationService.sendPushNotificationDirect({
+          tokens: Array.from(tokenSet),
+          title: tenantTitle,
+          body: tenantBody,
+          data: {
+            type: 'payment_rejected',
+            notificationType: 'payment_rejected',
+            paymentId,
+            billId: payment.billId || '',
+            tenantId: payment.tenantId,
+            amount: String(payment.amount),
+          },
+        });
+      }
+    } catch (notifErr) {
+      console.warn('Tenant notification on rejection skipped:', notifErr);
+    }
 
     return updatedPayment;
   },

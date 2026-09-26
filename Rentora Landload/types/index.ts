@@ -86,6 +86,7 @@ export interface Tenant {
   
   createdAt: string;
   updatedAt: string;
+  notificationTokens?: string[];
 }
 
 export type PaymentStatus = 'paid' | 'partial' | 'unpaid';

@@ -105,10 +105,11 @@ service cloud.firestore {
 
     // Users Collection (Doc ID is user UID)
     match /users/{userId} {
-      // Users can read their own profile; Landlords can read/create/update tenant profiles for their tenants
+      // Users can read their own profile; Landlords can read/create/update tenant profiles; Tenants can read their landlord's profile
       allow read: if isAuthenticated() && (
         request.auth.uid == userId ||
-        (resource.data.ownerId != null && resource.data.ownerId == request.auth.uid)
+        (resource.data.ownerId != null && resource.data.ownerId == request.auth.uid) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.ownerId == userId)
       );
       allow create: if isAuthenticated() && (
         request.auth.uid == userId ||

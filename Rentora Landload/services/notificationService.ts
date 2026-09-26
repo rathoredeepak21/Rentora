@@ -53,6 +53,7 @@ export const notificationService = {
           sound: 'default',
           enableVibrate: true,
           showBadge: true,
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         });
       } catch (err) {
         console.warn('Error setting up notification channel in Landlord app:', err);
@@ -61,7 +62,7 @@ export const notificationService = {
   },
 
   /**
-   * Registers for push notifications and saves FCM token under landlord profile
+   * Registers for push notifications and saves tokens under landlord profile
    */
   async registerForPushNotificationsAsync(uid: string): Promise<string | null> {
     if (!uid) return null;
@@ -86,31 +87,38 @@ export const notificationService = {
         return null;
       }
 
+      const tokensToAdd: string[] = [];
+
       // 1. Obtain native FCM registration token from Android
-      let token: string | null = null;
       try {
         const devicePushToken = await Notifications.getDevicePushTokenAsync();
         if (devicePushToken && devicePushToken.data) {
-          token = typeof devicePushToken.data === 'string'
+          const rawToken = typeof devicePushToken.data === 'string'
             ? devicePushToken.data
             : JSON.stringify(devicePushToken.data);
-          console.log('[LandlordNotificationService] Acquired native device FCM token');
+          if (rawToken && rawToken.trim()) {
+            tokensToAdd.push(rawToken.trim());
+            console.log('[LandlordNotificationService] Acquired native device FCM token');
+          }
         }
       } catch (deviceTokenErr) {
         console.log('[LandlordNotificationService] Native token acquisition fallback:', deviceTokenErr);
       }
 
-      // Fallback for development client / simulator
-      if (!token) {
-        try {
-          const expoPush = await Notifications.getExpoPushTokenAsync();
-          token = expoPush?.data || null;
-        } catch (expoErr) {
-          console.log('[LandlordNotificationService] Expo token fallback error:', expoErr);
+      // 2. Obtain Expo push token
+      try {
+        const expoPush = await Notifications.getExpoPushTokenAsync({
+          projectId: '7bf8286a-28e4-4aa2-8329-927d11c1394e',
+        });
+        if (expoPush && expoPush.data && expoPush.data.trim()) {
+          tokensToAdd.push(expoPush.data.trim());
+          console.log('[LandlordNotificationService] Acquired Expo push token:', expoPush.data);
         }
+      } catch (expoErr) {
+        console.log('[LandlordNotificationService] Expo token error:', expoErr);
       }
 
-      if (!token) {
+      if (tokensToAdd.length === 0) {
         console.warn('[LandlordNotificationService] Unable to obtain push token.');
         return null;
       }
@@ -118,14 +126,14 @@ export const notificationService = {
       // Check previously saved token on this device
       const previousToken = await AsyncStorage.getItem(DEVICE_FCM_TOKEN_KEY);
 
-      // Save token in Firestore users/{uid} with multi-device arrayUnion
+      // Save tokens in Firestore users/{uid} with multi-device arrayUnion
       const userDocRef = doc(db, 'users', uid);
       try {
         await updateDoc(userDocRef, {
-          notificationTokens: arrayUnion(token),
+          notificationTokens: arrayUnion(...tokensToAdd),
           updatedAt: new Date().toISOString(),
         });
-        if (previousToken && previousToken !== token) {
+        if (previousToken && !tokensToAdd.includes(previousToken)) {
           await updateDoc(userDocRef, {
             notificationTokens: arrayRemove(previousToken),
           });
@@ -134,8 +142,8 @@ export const notificationService = {
         console.warn('[LandlordNotificationService] Error updating user doc token:', uErr);
       }
 
-      // Cache token locally
-      await AsyncStorage.setItem(DEVICE_FCM_TOKEN_KEY, token);
+      // Cache primary token locally
+      await AsyncStorage.setItem(DEVICE_FCM_TOKEN_KEY, tokensToAdd[0]);
 
       // Listen for FCM token rotations/refreshes
       if (!pushTokenSubscription) {
@@ -147,10 +155,65 @@ export const notificationService = {
         });
       }
 
-      return token;
+      return tokensToAdd[0];
     } catch (error) {
       console.warn('[LandlordNotificationService] Could not register push notification token:', error);
       return null;
+    }
+  },
+
+  /**
+   * Direct push dispatch via Expo push service (immediate 24/7, works in background/terminated)
+   */
+  async sendPushNotificationDirect(payload: {
+    tokens: string[];
+    title: string;
+    body: string;
+    data?: Record<string, any>;
+  }): Promise<boolean> {
+    if (!payload.tokens || payload.tokens.length === 0) return false;
+
+    const expoTokens = Array.from(
+      new Set(
+        payload.tokens.filter(
+          (t) => typeof t === 'string' && (t.startsWith('ExponentPushToken[') || t.startsWith('ExpoPushToken['))
+        )
+      )
+    );
+
+    if (expoTokens.length === 0) {
+      console.log('[LandlordPushDirect] No valid Expo push tokens found among:', payload.tokens);
+      return false;
+    }
+
+    const messages = expoTokens.map((to) => ({
+      to,
+      sound: 'default',
+      title: payload.title,
+      body: payload.body,
+      data: payload.data || {},
+      priority: 'high',
+      channelId: 'default',
+      _displayInForeground: true,
+    }));
+
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(messages),
+      });
+
+      const resData = await response.json();
+      console.log('[LandlordPushDirect] Sent to', expoTokens.length, 'tokens:', resData);
+      return true;
+    } catch (pushErr) {
+      console.warn('[LandlordPushDirect] Push dispatch network error:', pushErr);
+      return false;
     }
   },
 
