@@ -10,8 +10,8 @@ import LoadingView from '../../components/ui/LoadingView';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import db from '../../utils/db';
-import { Tenant, Bill } from '../../types';
-import { billService, decorateBills, sortBillsChronological, isBillClosedOrPaid } from '../../services/billService';
+import { Tenant, Bill, Payment } from '../../types';
+import { billService, decorateBills, sortBillsChronological, isBillClosedOrPaid, calculateTenantOutstanding } from '../../services/billService';
 import { formatShortBillDate, parseDateSafely } from '../../utils/date';
 
 export default function CreateBillScreen() {
@@ -199,13 +199,9 @@ export default function CreateBillScreen() {
           setCurrentMeterReading('');
         }
 
-        // Calculate outstanding balance from previous bills (true arrears carried over from latest bill)
+        // Calculate actual unpaid outstanding from older bills (true arrears carried over from latest bill)
         const tenantBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === unitTenant.id);
-        const decorated = decorateBills(tenantBills);
-        const sortedDecorated = sortBillsChronological(decorated);
-        const latestDecorated = sortedDecorated.length > 0 ? sortedDecorated[sortedDecorated.length - 1] : null;
-        // If latest bill is already paid, previous due is 0. Otherwise carry its actual outstanding balance.
-        const outstanding = latestDecorated && !isBillClosedOrPaid(latestDecorated) ? (latestDecorated.remainingAmount || 0) : 0;
+        const outstanding = calculateTenantOutstanding(tenantBills);
         setPreviousDue(String(outstanding));
       } catch (e) {
         console.error(e);
@@ -256,13 +252,9 @@ export default function CreateBillScreen() {
           setCurrentMeterReading('');
         }
 
-        // Calculate outstanding balance from previous bills (true arrears carried over from latest bill)
+        // Calculate actual unpaid outstanding from older bills (true arrears carried over from latest bill)
         const tenantBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === activeTenant.id);
-        const decorated = decorateBills(tenantBills);
-        const sortedDecorated = sortBillsChronological(decorated);
-        const latestDecorated = sortedDecorated.length > 0 ? sortedDecorated[sortedDecorated.length - 1] : null;
-        // If latest bill is already paid, previous due is 0. Otherwise carry its actual outstanding balance.
-        const outstanding = latestDecorated && !isBillClosedOrPaid(latestDecorated) ? (latestDecorated.remainingAmount || 0) : 0;
+        const outstanding = calculateTenantOutstanding(tenantBills);
         setPreviousDue(String(outstanding));
       };
       loadReadingsOnly();
@@ -438,8 +430,13 @@ export default function CreateBillScreen() {
         totalAmount,
         dueDate,
         paidAmount: 0,
+        totalPaymentAllocated: 0,
         remainingAmount: totalAmount,
         paymentStatus: 'unpaid',
+        previousDuePaid: 0,
+        previousDueRemaining: prevDueVal,
+        currentBillPaid: 0,
+        currentBillRemaining: subtotal,
 
         electricityBillType: eType,
         waterBillType: wType,

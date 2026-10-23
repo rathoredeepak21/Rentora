@@ -273,6 +273,112 @@ const decTest6Second = decorateTenantBills([curBill5]);
 assert(decTest6First[0].totalAmount === 8300 && decTest6Second[0].totalAmount === 8300,
   `PROMPT TEST 6: Total payable remains stable at 8300 after refresh (no double counting)`);
 
+// =========================================================================
+// REAL-WORLD SCENARIO TESTS: SEPTEMBER ARREARS & OCTOBER 5200 PAYMENT
+// =========================================================================
+const sepRealBill = {
+  id: 'b-sep',
+  billNumber: 'INV-2026-00001',
+  billingMonth: '2026-09',
+  subtotal: 5390,
+  previousDue: 3000,
+  totalAmount: 8390,
+  paidAmount: 5400,
+  remainingAmount: 2990,
+  paymentStatus: 'partial',
+};
+
+const octRealBill = {
+  id: 'b-oct',
+  billNumber: 'INV-2026-00002',
+  billingMonth: '2026-10',
+  subtotal: 5710,
+  previousDue: 2990,
+  totalAmount: 8700,
+  paidAmount: 0,
+  remainingAmount: 8700,
+  paymentStatus: 'unpaid',
+};
+
+// Sub-Scenario A: Before October payment received (unpaid October bill)
+const decOctUnpaid = decorateTenantBills([sepRealBill, octRealBill], [
+  { id: 'p-sep-1', billId: 'b-sep', amount: 5400, status: 'approved' },
+]);
+const octBeforePay = decOctUnpaid.find(b => b.id === 'b-oct');
+assert(octBeforePay.remainingAmount === 8700,
+  `REAL-WORLD SCENARIO A: Before October payment, remainingAmount = ${octBeforePay.remainingAmount} (expected 8700)`);
+assert(octBeforePay.paidAmount === 0,
+  `REAL-WORLD SCENARIO A: Before October payment, paidAmount = ${octBeforePay.paidAmount} (expected 0)`);
+assert(octBeforePay.previousDueRemaining === 2990,
+  `REAL-WORLD SCENARIO A: Before October payment, previousDueRemaining = ${octBeforePay.previousDueRemaining} (expected 2990)`);
+
+// Sub-Scenario B: Pending/rejected October payment must NOT reduce balance
+const decOctPending = decorateTenantBills([sepRealBill, octRealBill], [
+  { id: 'p-sep-1', billId: 'b-sep', amount: 5400, status: 'approved' },
+  { id: 'p-oct-pending', billId: 'b-oct', amount: 5200, status: 'pending' },
+  { id: 'p-oct-rejected', billId: 'b-oct', amount: 5200, status: 'rejected' },
+]);
+const octPendingRes = decOctPending.find(b => b.id === 'b-oct');
+assert(octPendingRes.remainingAmount === 8700 && octPendingRes.paidAmount === 0,
+  `REAL-WORLD SCENARIO B: Pending/rejected payments do not reduce balance (remaining = ${octPendingRes.remainingAmount})`);
+
+// Sub-Scenario C: October payment of 5200 received and approved
+const decOctApproved = decorateTenantBills([sepRealBill, octRealBill], [
+  { id: 'p-sep-1', billId: 'b-sep', amount: 5400, status: 'approved' },
+  { id: 'p-oct-1', billId: 'b-oct', amount: 5200, status: 'approved' },
+]);
+const octApprovedRes = decOctApproved.find(b => b.id === 'b-oct');
+const sepApprovedRes = decOctApproved.find(b => b.id === 'b-sep');
+
+assert(octApprovedRes.subtotal === 5710,
+  `REAL-WORLD SCENARIO C: Current Month Bill = ${octApprovedRes.subtotal} (expected 5710)`);
+assert(octApprovedRes.currentBillPaid === 2210,
+  `REAL-WORLD SCENARIO C: Current Month Paid = ${octApprovedRes.currentBillPaid} (expected 2210)`);
+assert(octApprovedRes.currentBillRemaining === 3500,
+  `REAL-WORLD SCENARIO C: Current Month Due = ${octApprovedRes.currentBillRemaining} (expected 3500)`);
+assert(octApprovedRes.previousDue === 2990,
+  `REAL-WORLD SCENARIO C: Previous Arrears = ${octApprovedRes.previousDue} (expected 2990)`);
+assert(octApprovedRes.previousDuePaid === 2990,
+  `REAL-WORLD SCENARIO C: Previous Arrears Paid = ${octApprovedRes.previousDuePaid} (expected 2990)`);
+assert(octApprovedRes.previousDueRemaining === 0,
+  `REAL-WORLD SCENARIO C: Previous Arrears Remaining = ${octApprovedRes.previousDueRemaining} (expected 0)`);
+assert(octApprovedRes.monthWiseAccounting.previousMonthStatus === 'paid',
+  `REAL-WORLD SCENARIO C: Previous Arrears Status = ${octApprovedRes.monthWiseAccounting.previousMonthStatus} (expected 'paid'/Cleared)`);
+assert(octApprovedRes.totalAmount === 8700,
+  `REAL-WORLD SCENARIO C: Original Total Statement = ${octApprovedRes.totalAmount} (expected 8700)`);
+assert(octApprovedRes.paidAmount === 5200,
+  `REAL-WORLD SCENARIO C: Total Paid Across Statement = ${octApprovedRes.paidAmount} (expected 5200, MUST NOT BE 2210)`);
+assert(octApprovedRes.remainingAmount === 3500,
+  `REAL-WORLD SCENARIO C: Overall Remaining Payable = ${octApprovedRes.remainingAmount} (expected 3500, MUST NOT BE 510)`);
+assert(octApprovedRes.paymentStatus === 'partial',
+  `REAL-WORLD SCENARIO C: Status Badge = ${octApprovedRes.paymentStatus} (expected 'partial'/PARTIALLY PAID)`);
+
+// Verify September bill preserved its own month-wise paid, remaining, and cleared status
+assert(sepApprovedRes.subtotal === 5390,
+  `REAL-WORLD SCENARIO C: September Subtotal = ${sepApprovedRes.subtotal} (expected 5390)`);
+assert(sepApprovedRes.paidAmount === 5400,
+  `REAL-WORLD SCENARIO C: September Paid = ${sepApprovedRes.paidAmount} (expected 5400)`);
+assert(sepApprovedRes.remainingAmount === 2990,
+  `REAL-WORLD SCENARIO C: September Remaining = ${sepApprovedRes.remainingAmount} (expected 2990)`);
+assert(sepApprovedRes.paymentStatus === 'partial',
+  `REAL-WORLD SCENARIO C: September Status = ${sepApprovedRes.paymentStatus} (expected 'partial')`);
+
+// Sub-Scenario D: After a further ₹3,500 approved payment (clearing October completely)
+const decOctFull = decorateTenantBills([sepRealBill, octRealBill], [
+  { id: 'p-sep-1', billId: 'b-sep', amount: 5400, status: 'approved' },
+  { id: 'p-oct-1', billId: 'b-oct', amount: 5200, status: 'approved' },
+  { id: 'p-oct-2', billId: 'b-oct', amount: 3500, status: 'approved' },
+]);
+const octFullRes = decOctFull.find(b => b.id === 'b-oct');
+assert(octFullRes.remainingAmount === 0,
+  `REAL-WORLD SCENARIO D: After further 3500 payment, remaining = ${octFullRes.remainingAmount} (expected 0)`);
+assert(octFullRes.currentBillRemaining === 0,
+  `REAL-WORLD SCENARIO D: After further 3500 payment, currentBillRemaining = ${octFullRes.currentBillRemaining} (expected 0)`);
+assert(octFullRes.paidAmount === 8700,
+  `REAL-WORLD SCENARIO D: After further 3500 payment, paidAmount = ${octFullRes.paidAmount} (expected 8700)`);
+assert(octFullRes.paymentStatus === 'paid',
+  `REAL-WORLD SCENARIO D: After further 3500 payment, status = ${octFullRes.paymentStatus} (expected 'paid')`);
+
 console.log('\n==================================================');
 if (allPassed) {
   console.log('🎉 ALL TESTS PASSED SUCCESSFULLY!');

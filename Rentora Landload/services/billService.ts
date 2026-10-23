@@ -1,5 +1,5 @@
 import db from '../utils/db';
-import { Bill, Payment } from '../types';
+import { Bill, Payment, PaymentStatus } from '../types';
 import { localStorageService } from './localStorageService';
 import { notificationService } from './notificationService';
 
@@ -9,7 +9,6 @@ export const isBillClosedOrPaid = (bill: Bill): boolean => {
   if (!bill) return false;
   if (bill.paymentStatus === 'paid') return true;
   if (bill.remainingAmount !== undefined && Number(bill.remainingAmount) <= 0 && Number(bill.paidAmount || 0) > 0) return true;
-  if (bill.totalAmount !== undefined && bill.paidAmount !== undefined && Number(bill.totalAmount) > 0 && Number(bill.paidAmount) >= Number(bill.totalAmount)) return true;
   return false;
 };
 
@@ -55,69 +54,122 @@ export const sortBillsDescending = (bills: Bill[]): Bill[] => {
   });
 };
 
-export const decorateBills = (tenantBills: Bill[]): Bill[] => {
-  if (!Array.isArray(tenantBills)) return [];
+/**
+ * Calculates a tenant's canonical actual outstanding liabilities across all bills.
+ * Equals the latest bill's remaining amount (which carries forward unpaid arrears).
+ */
+export const calculateTenantOutstanding = (tenantBills: Bill[], _payments?: Payment[]): number => {
+  if (!Array.isArray(tenantBills) || tenantBills.length === 0) return 0;
+  const decorated = decorateBills(tenantBills);
+  const latest = decorated[decorated.length - 1];
+  return latest ? latest.remainingAmount : 0;
+};
+
+/**
+ * Calculates portfolio-wide pending balance across all bills by grouping by tenant,
+ * computing each tenant's canonical outstanding once, and summing them.
+ */
+export const calculateOverallPending = (bills: Bill[], _payments?: Payment[]): number => {
+  if (!Array.isArray(bills) || bills.length === 0) return 0;
+
+  const billsByTenant: Record<string, Bill[]> = {};
+  bills.forEach(b => {
+    if (!b || !b.tenantId) return;
+    if (!billsByTenant[b.tenantId]) {
+      billsByTenant[b.tenantId] = [];
+    }
+    billsByTenant[b.tenantId].push(b);
+  });
+
+  let totalPending = 0;
+  Object.keys(billsByTenant).forEach(tId => {
+    totalPending += calculateTenantOutstanding(billsByTenant[tId]);
+  });
+
+  return totalPending;
+};
+
+/**
+ * Canonical Oldest-Outstanding-First Payment Allocation & Decorator:
+ * - Preserves original invoice breakdown: subtotal, previousDue, totalAmount.
+ * - Allocates payments chronologically oldest-first to previous arrears and then current month charges.
+ * - Correctly reflects when previous arrears carried over into a subsequent bill are paid off by prior bill settlements.
+ * - Preserves the invariant: totalAmount - totalPaymentAllocated === remainingAmount.
+ * - Guaranteed: Creating a new bill without payments leaves it UNPAID with ₹0 paid and full payable amount remaining.
+ */
+export const decorateBills = (tenantBills: Bill[], _payments?: Payment[]): Bill[] => {
+  if (!Array.isArray(tenantBills) || tenantBills.length === 0) return [];
   // Sort oldest first chronologically (billingMonth -> billNumber -> createdAt)
   const sorted = sortBillsChronological(tenantBills);
-  
-  return sorted.map((bill) => {
-    const isClosed = isBillClosedOrPaid(bill);
 
-    // Current bill charges (subtotal)
+  let accumulatedPriorRemaining = 0;
+
+  return sorted.map((bill, index) => {
     const subtotal = bill.subtotal !== undefined 
       ? Number(bill.subtotal) 
       : ((Number(bill.rent) || 0) + (Number(bill.electricityCharge) || 0) + (Number(bill.waterCharge) || 0) + (Number(bill.parkingCharge) || 0) + (Number(bill.maintenanceCharge) || 0) + (Number(bill.otherCharges) || 0));
 
-    // The bill's own recorded previous due (actual outstanding previous due before this bill)
-    // PRESERVE PREVIOUS DUE in total payable: Previous Due + Current Bill = Total Payable
-    // NEVER overwrite with future bills, and NEVER strip from the bill!
+    // Preserve original invoice figures
     const previousDue = Math.max(0, Number(bill.previousDue) || 0);
+    const totalAmount = subtotal + previousDue; // Original Total Payable
 
-    // Total Payable = Current bill charges + Previous Due
-    const totalAmount = subtotal + previousDue;
+    const paidAmount = Number(bill.paidAmount) || 0;
 
+    const isClosed = bill.paymentStatus === 'paid' && (bill.remainingAmount === 0 || (bill.paidAmount !== undefined && Number(bill.paidAmount) >= totalAmount));
     if (isClosed) {
-      const paidAmount = Number(bill.paidAmount) || totalAmount;
-      const prevDuePaid = Math.min(previousDue, paidAmount);
-      const curPaid = Math.max(0, paidAmount - prevDuePaid);
-
+      accumulatedPriorRemaining = 0;
       return {
         ...bill,
-        previousDue,
         subtotal,
+        previousDue,
         totalAmount,
-        paidAmount,
+        paidAmount: Math.max(paidAmount, totalAmount),
         remainingAmount: 0,
         paymentStatus: 'paid' as const,
-        previousDuePaid: prevDuePaid,
+        previousDuePaid: previousDue,
         previousDueRemaining: 0,
-        currentBillPaid: curPaid,
+        currentBillPaid: subtotal,
         currentBillRemaining: 0,
+        totalPaymentAllocated: totalAmount,
       };
     }
 
-    // Bill is open (unpaid or partial)
-    const paidAmount = Number(bill.paidAmount) || 0;
-    // Each bill's own remaining balance is its subtotal minus allocated payment
-    const remainingAmount = bill.remainingAmount !== undefined
-      ? Number(bill.remainingAmount)
-      : Math.max(0, subtotal - paidAmount);
+    let previousDuePaid = 0;
+    let previousDueRemaining = 0;
+    let currentBillPaid = 0;
+    let currentBillRemaining = 0;
+    let remainingAmount = 0;
 
-    // Chronological payment allocation:
-    // 1. Clear previous due first
-    const previousDuePaid = Math.min(previousDue, paidAmount);
-    const previousDueRemaining = Math.max(0, previousDue - previousDuePaid);
+    if (index === 0) {
+      previousDuePaid = Math.min(previousDue, paidAmount);
+      previousDueRemaining = Math.max(0, previousDue - previousDuePaid);
 
-    // 2. Apply remaining payment to current month bill
-    const remainingPaymentForCurrent = Math.max(0, paidAmount - previousDuePaid);
-    const currentBillPaid = Math.min(subtotal, remainingPaymentForCurrent);
-    const currentBillRemaining = Math.max(0, subtotal - currentBillPaid);
+      const remForCurrent = Math.max(0, paidAmount - previousDuePaid);
+      currentBillPaid = Math.min(subtotal, remForCurrent);
+      currentBillRemaining = Math.max(0, subtotal - currentBillPaid);
 
-    let paymentStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
-    if (remainingAmount === 0 && subtotal > 0) {
+      remainingAmount = previousDueRemaining + currentBillRemaining;
+      accumulatedPriorRemaining = remainingAmount;
+    } else {
+      previousDueRemaining = Math.min(previousDue, accumulatedPriorRemaining);
+      previousDuePaid = Math.max(0, previousDue - previousDueRemaining);
+
+      currentBillPaid = Math.min(subtotal, paidAmount);
+      currentBillRemaining = Math.max(0, subtotal - currentBillPaid);
+
+      remainingAmount = previousDueRemaining + currentBillRemaining;
+      accumulatedPriorRemaining = remainingAmount;
+    }
+
+    const totalPaymentAllocated = previousDuePaid + currentBillPaid;
+
+    let paymentStatus: PaymentStatus = 'unpaid';
+    if (remainingAmount === 0 && (totalAmount > 0 || paidAmount > 0)) {
       paymentStatus = 'paid';
-    } else if (paidAmount > 0) {
+    } else if (paidAmount > 0 || previousDuePaid > 0) {
       paymentStatus = 'partial';
+    } else {
+      paymentStatus = 'unpaid';
     }
 
     return {
@@ -132,6 +184,7 @@ export const decorateBills = (tenantBills: Bill[]): Bill[] => {
       previousDueRemaining,
       currentBillPaid,
       currentBillRemaining,
+      totalPaymentAllocated,
     };
   });
 };
@@ -235,10 +288,27 @@ export const billService = {
       }
     }
     
+    const subtotal = bill.subtotal !== undefined
+      ? Number(bill.subtotal)
+      : ((Number(bill.rent) || 0) + (Number(bill.electricityCharge) || 0) + (Number(bill.waterCharge) || 0) + (Number(bill.parkingCharge) || 0) + (Number(bill.maintenanceCharge) || 0) + (Number(bill.otherCharges) || 0));
+    const previousDue = Math.max(0, Number(bill.previousDue) || 0);
+    const totalAmount = subtotal + previousDue;
+
     const data: Omit<Bill, 'id' | 'createdAt' | 'updatedAt'> = {
       ...bill,
       billNumber,
       tenantAuthUid: tenantAuthUid || null,
+      subtotal,
+      previousDue,
+      totalAmount,
+      paidAmount: 0,
+      totalPaymentAllocated: 0,
+      remainingAmount: totalAmount,
+      paymentStatus: 'unpaid',
+      previousDuePaid: 0,
+      previousDueRemaining: previousDue,
+      currentBillPaid: 0,
+      currentBillRemaining: subtotal,
     };
     
     const newBill = await db.addDoc<Bill>(COLLECTION, data);

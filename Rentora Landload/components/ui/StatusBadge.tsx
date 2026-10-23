@@ -14,9 +14,10 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, type = 'bill',
   const getBadgeStyles = () => {
     let backgroundColor = colors.border;
     let color = colors.textSecondary;
-    let label = status;
+    const safeStatus = (status || '').toString().trim();
+    let label = safeStatus || (type === 'tenant' ? 'Active' : type === 'unit' ? 'Vacant' : 'Pending');
 
-    const normStatus = status.toLowerCase().trim();
+    const normStatus = safeStatus.toLowerCase();
 
     if (type === 'tenant') {
       if (normStatus === 'active') {
@@ -61,7 +62,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, type = 'bill',
 
   return (
     <View style={[styles.badge, { backgroundColor }, style]}>
-      <Text style={[styles.text, { color }]}>{label.toUpperCase()}</Text>
+      <Text style={[styles.text, { color }]}>{(label || '').toUpperCase()}</Text>
     </View>
   );
 };

@@ -45,18 +45,27 @@ function RootLayoutNav() {
   useEffect(() => {
     if (!user || loading) return;
 
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    // Listen for foreground notifications
+    const receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
+      console.log('[FCM] Device message received in foreground:', notification.request.content.title);
+      console.log('[FCM] Local notification displayed');
+    });
+
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      console.log('[FCM] Notification response/tap received');
       notificationService.handleNotificationTap(response, router);
     });
 
     Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response) {
+        console.log('[FCM] Notification tapped to launch terminated app');
         notificationService.handleNotificationTap(response, router);
       }
     });
 
     return () => {
-      subscription.remove();
+      receivedSubscription.remove();
+      responseSubscription.remove();
     };
   }, [user, loading]);
 
@@ -96,6 +105,7 @@ function RootLayoutNav() {
         <Stack.Screen name="tenants/[id]" options={{ headerShown: true, title: 'Tenant Details' }} />
         <Stack.Screen name="tenants/edit" options={{ headerShown: true, title: 'Edit Tenant' }} />
         <Stack.Screen name="tenants/vacate" options={{ headerShown: true, title: 'Vacate Tenant' }} />
+        <Stack.Screen name="tenants/settlement" options={{ headerShown: true, title: 'Settlement Statement' }} />
         <Stack.Screen name="tenants/payments" options={{ headerShown: true, title: 'Payments History' }} />
         <Stack.Screen name="bills/create" options={{ headerShown: true, title: 'Create Bill' }} />
         <Stack.Screen name="bills/preview" options={{ headerShown: true, title: 'Bill Preview' }} />

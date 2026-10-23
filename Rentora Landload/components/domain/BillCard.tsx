@@ -37,6 +37,23 @@ export const BillCard = memo<BillCardProps>(({
     }
   };
 
+  const totalPayable = Number(bill.totalAmount) || 0;
+  const totalPaymentAllocated = bill.totalPaymentAllocated !== undefined
+    ? Number(bill.totalPaymentAllocated)
+    : Number(bill.paidAmount) || 0;
+
+  const isPaid = (bill.paymentStatus === 'paid' && (totalPaymentAllocated > 0 || totalPayable === 0)) || 
+    (bill.remainingAmount !== undefined && Number(bill.remainingAmount) <= 0 && totalPaymentAllocated >= totalPayable && totalPayable > 0);
+
+  const remainingAmountDue = isPaid 
+    ? 0 
+    : (bill.remainingAmount !== undefined 
+        ? Math.max(0, Number(bill.remainingAmount)) 
+        : Math.max(0, totalPayable - totalPaymentAllocated));
+
+  const isPartial = !isPaid && totalPaymentAllocated > 0 && remainingAmountDue > 0;
+  const status = isPaid ? 'paid' : isPartial ? 'partial' : 'unpaid';
+
   return (
     <AppCard onPress={() => onPress(bill.id!)} style={styles.card}>
       <View style={styles.header}>
@@ -45,7 +62,7 @@ export const BillCard = memo<BillCardProps>(({
           <Text style={styles.monthText}>{formatMonth(bill.billingMonth)}</Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-          <StatusBadge status={bill.paymentStatus} type="bill" />
+          <StatusBadge status={status} type="bill" />
           {onMenuPress && (
             <TouchableOpacity onPress={() => onMenuPress(bill)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Ionicons name="ellipsis-vertical" size={16} color={colors.textSecondary} />
@@ -73,20 +90,39 @@ export const BillCard = memo<BillCardProps>(({
         </View>
         
         <View style={styles.amountCol}>
-          <Text style={styles.amountLabel}>Total Due</Text>
-          <MoneyText amount={bill.totalAmount} variant="bold" style={styles.amountValue} />
-          {bill.previousDue > 0 && (
+          <Text style={[styles.amountLabel, isPaid ? { color: colors.secondary } : isPartial ? { color: '#D97706' } : undefined]}>
+            REMAINING AMOUNT DUE
+          </Text>
+          <MoneyText
+            amount={remainingAmountDue}
+            variant={isPaid ? 'success' : isPartial ? 'bold' : 'bold'}
+            style={{
+              ...styles.amountValue,
+              ...(isPaid ? { color: colors.secondary } : isPartial ? { color: '#D97706' } : {})
+            }}
+          />
+          <Text style={styles.prevDueHint} numberOfLines={1}>
+            Original Total Payable: ₹{totalPayable.toLocaleString('en-IN')}
+          </Text>
+          {totalPaymentAllocated > 0 && (
+            <Text style={[styles.prevDueHint, { color: colors.secondary, fontWeight: typography.weights.semibold }]} numberOfLines={1}>
+              Total payment allocated: ₹{totalPaymentAllocated.toLocaleString('en-IN')}
+            </Text>
+          )}
+          {totalPaymentAllocated === 0 && bill.previousDue > 0 && (
             <Text style={styles.prevDueHint} numberOfLines={1}>
-              (₹{bill.subtotal || (bill.totalAmount - bill.previousDue)} + ₹{bill.previousDue} Prev)
+              (₹{(bill.subtotal || (totalPayable - bill.previousDue)).toLocaleString('en-IN')} + ₹{bill.previousDue.toLocaleString('en-IN')} Prev)
             </Text>
           )}
         </View>
       </View>
 
-      {bill.paymentStatus === 'partial' && (
+      {isPartial && (
         <View style={styles.partialFooter}>
           <Text style={styles.partialText}>
-            Balance Due: <Text style={styles.boldText}>₹{bill.remainingAmount}</Text>
+            Total payment allocated: <Text style={{ color: colors.secondary, fontWeight: typography.weights.bold }}>₹{totalPaymentAllocated.toLocaleString('en-IN')}</Text>
+            {'  •  '}
+            Original Total Payable: <Text style={styles.boldText}>₹{totalPayable.toLocaleString('en-IN')}</Text>
           </Text>
         </View>
       )}

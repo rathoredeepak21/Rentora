@@ -23,22 +23,30 @@ export const TenantCard = memo<TenantCardProps>(({
   const styles = useStyles(getStyles);
   const { colors } = useTheme();
 
+  if (!tenant) return null;
+
+  const tenantName = tenant.name || 'Unnamed Tenant';
+  const tenantMobile = tenant.mobile || tenant.mobileNumber || 'No Mobile Number';
+  const tenantId = tenant.id || '';
+  const safePropName = propertyName || 'Property';
+  const safeUnitNumber = unitNumber || 'N/A';
+
   return (
-    <AppCard onPress={() => onPress(tenant.id!)} style={styles.card}>
+    <AppCard onPress={() => tenantId ? onPress(tenantId) : undefined} style={styles.card}>
       <View style={styles.header}>
         <View style={styles.userInfo}>
           <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
-            {tenant.name}
+            {tenantName}
           </Text>
           <View style={styles.phoneRow}>
             <Ionicons name="call-outline" size={14} color={colors.textSecondary} />
             <Text style={styles.phoneText} numberOfLines={1} ellipsizeMode="tail">
-              {tenant.mobile || 'No Mobile Number'}
+              {tenantMobile}
             </Text>
           </View>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 4 }}>
-          <StatusBadge status={tenant.status} type="tenant" />
+          <StatusBadge status={tenant.status || 'vacated'} type="tenant" />
         </View>
       </View>
 
@@ -48,13 +56,13 @@ export const TenantCard = memo<TenantCardProps>(({
         <View style={styles.detailItem}>
           <Ionicons name="business-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.detailText} numberOfLines={1}>
-            {propertyName} — Unit {unitNumber}
+            {safePropName} — Unit {safeUnitNumber}
           </Text>
         </View>
         
         <View style={styles.rentWrapper}>
           <Text style={styles.rentLabel}>Rent: </Text>
-          <MoneyText amount={tenant.monthlyRent} style={styles.rentValue} />
+          <MoneyText amount={tenant.monthlyRent || 0} style={styles.rentValue} />
         </View>
       </View>
     </AppCard>

@@ -142,6 +142,7 @@ export default function AddTenantScreen() {
   const [documentNumber, setDocumentNumber] = useState('');
   const [moveInDate, setMoveInDate] = useState(new Date().toISOString().split('T')[0]); // YYYY-MM-DD
   const [monthlyRent, setMonthlyRent] = useState('0');
+  const [securityDeposit, setSecurityDeposit] = useState('0');
   const [initialMeterReading, setInitialMeterReading] = useState('0');
 
   // Electricity Billing Type
@@ -308,6 +309,7 @@ export default function AddTenantScreen() {
         unitId: selectedUnitId,
         moveInDate,
         monthlyRent: parseFloat(monthlyRent) || 0,
+        securityDeposit: parseFloat(securityDeposit) || 0,
         electricityBillType,
         waterBillType,
       };
@@ -606,6 +608,15 @@ export default function AddTenantScreen() {
             prefix="₹"
             keyboardType="numeric"
             error={errors.monthlyRent}
+          />
+
+          <AppInput
+            label="Security Deposit (Optional)"
+            value={securityDeposit}
+            onChangeText={setSecurityDeposit}
+            placeholder="0"
+            prefix="₹"
+            keyboardType="numeric"
           />
         </View>
 

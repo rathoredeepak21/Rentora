@@ -140,10 +140,14 @@ export const tenantService = {
   },
 
   async searchTenants(ownerId: string, query: string, status?: TenantStatus): Promise<Tenant[]> {
-    const normalizedQuery = query.toLowerCase().trim();
+    const normalizedQuery = (query || '').toLowerCase().trim();
+    const targetStatus = (status || '').toLowerCase().trim();
+
     const allTenants = await db.queryDocs<Tenant>(COLLECTION, (doc) => {
+      if (!doc) return false;
       const matchOwner = doc.ownerId === ownerId;
-      const matchStatus = status ? doc.status === status : true;
+      const docStatus = (doc.status || 'active').toLowerCase().trim();
+      const matchStatus = targetStatus ? docStatus === targetStatus : true;
       return matchOwner && matchStatus;
     });
 
@@ -152,9 +156,12 @@ export const tenantService = {
     }
 
     return allTenants.filter((doc) => {
+      if (!doc) return false;
+      const name = (doc.name || '').toLowerCase();
+      const mobile = (doc.mobile || doc.mobileNumber || '').toLowerCase();
       return (
-        doc.name.toLowerCase().includes(normalizedQuery) ||
-        doc.mobile.includes(normalizedQuery)
+        name.includes(normalizedQuery) ||
+        mobile.includes(normalizedQuery)
       );
     });
   },

@@ -182,7 +182,10 @@ export default function EditBillScreen() {
   // Subtotal & Grand Total
   const subtotal = rentVal + electricityCharge + waterChargeVal + parkingVal + maintVal + otherVal;
   const totalAmount = subtotal + prevDueVal;
-  const remainingAmount = Math.max(0, totalAmount - bill.paidAmount);
+  const prevDueRem = bill.previousDueRemaining !== undefined ? bill.previousDueRemaining : Math.max(0, prevDueVal - (bill.previousDuePaid || 0));
+  const curPaid = bill.currentBillPaid !== undefined ? bill.currentBillPaid : (bill.paidAmount || 0);
+  const curRem = Math.max(0, subtotal - curPaid);
+  const remainingAmount = prevDueRem + curRem;
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -238,10 +241,11 @@ export default function EditBillScreen() {
     setIsSaving(true);
 
     try {
-      let newStatus = bill.paymentStatus;
-      if (remainingAmount === 0) {
+      const actualPaid = Number(bill.totalPaymentAllocated !== undefined ? bill.totalPaymentAllocated : bill.paidAmount) || 0;
+      let newStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
+      if (remainingAmount === 0 && actualPaid > 0) {
         newStatus = 'paid';
-      } else if (bill.paidAmount > 0) {
+      } else if (actualPaid > 0) {
         newStatus = 'partial';
       } else {
         newStatus = 'unpaid';
@@ -263,6 +267,9 @@ export default function EditBillScreen() {
         totalAmount,
         remainingAmount,
         paymentStatus: newStatus,
+        previousDueRemaining: prevDueRem,
+        currentBillPaid: curPaid,
+        currentBillRemaining: curRem,
         dueDate,
 
         electricityBillType: eType,

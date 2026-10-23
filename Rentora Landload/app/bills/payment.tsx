@@ -83,16 +83,82 @@ export default function RecordPaymentScreen() {
       newErrors.paymentDate = 'Payment date is required';
     }
 
+    // Require Transaction / Reference ID for UPI and Bank Transfer
+    if (paymentMethod === 'upi') {
+      if (!transactionId || !transactionId.trim()) {
+        newErrors.transactionId = 'Please enter the UPI transaction/reference ID.';
+      }
+    } else if (paymentMethod === 'bank_transfer') {
+      if (!transactionId || !transactionId.trim()) {
+        newErrors.transactionId = 'Please enter the bank transfer reference/UTR.';
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const handlePaymentMethodSelect = (method: PaymentMethod) => {
+    setPaymentMethod(method);
+    // Clear stale transactionId error immediately when method changes
+    setErrors((prev) => {
+      if (prev.transactionId) {
+        const next = { ...prev };
+        delete next.transactionId;
+        return next;
+      }
+      return prev;
+    });
+  };
+
+  const handleTransactionIdChange = (text: string) => {
+    setTransactionId(text);
+    if (errors.transactionId && text.trim()) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.transactionId;
+        return next;
+      });
+    }
+  };
+
+  const handleAmountChange = (text: string) => {
+    setAmount(text);
+    if (errors.amount && parseFloat(text) > 0) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.amount;
+        return next;
+      });
+    }
   };
 
   const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
     if (selectedDate) {
       setDateValue(selectedDate);
-      setPaymentDate(selectedDate.toISOString().split('T')[0]);
+      const formatted = selectedDate.toISOString().split('T')[0];
+      setPaymentDate(formatted);
+      if (errors.paymentDate && formatted.trim()) {
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next.paymentDate;
+          return next;
+        });
+      }
     }
+  };
+
+  const getTransactionIdLabel = () => {
+    if (paymentMethod === 'upi') return 'UPI Transaction / Reference ID *';
+    if (paymentMethod === 'bank_transfer') return 'Bank Transfer Reference / UTR *';
+    return 'Transaction / Reference ID (Optional)';
+  };
+
+  const getTransactionIdPlaceholder = () => {
+    if (paymentMethod === 'upi') return 'e.g. UPI Ref / 12-digit UTR';
+    if (paymentMethod === 'bank_transfer') return 'e.g. UTR Number / IMPS / NEFT Ref';
+    return 'e.g. Cheque No. / Reference (Optional)';
   };
 
   const handlePickImage = async () => {
@@ -145,7 +211,7 @@ export default function RecordPaymentScreen() {
         paymentMethod,
       };
 
-      if (transactionId.trim()) {
+      if (paymentMethod !== 'cash' && transactionId.trim()) {
         paymentPayload.transactionId = transactionId.trim();
       }
       if (finalUrl) {
@@ -188,11 +254,11 @@ export default function RecordPaymentScreen() {
           <Text style={styles.overviewLabel}>Record Payment For</Text>
           <Text style={styles.billNumber}>{bill.billNumber}</Text>
           <View style={styles.gridRow}>
-            <Text style={styles.gridLabel}>Remaining Due:</Text>
+            <Text style={styles.gridLabel}>Remaining Amount Due:</Text>
             <Text style={styles.gridValue}>₹{bill.remainingAmount}</Text>
           </View>
           <View style={styles.gridRow}>
-            <Text style={styles.gridLabel}>Total Bill Amount:</Text>
+            <Text style={styles.gridLabel}>Original Total Payable:</Text>
             <Text style={styles.gridValue}>₹{bill.totalAmount}</Text>
           </View>
         </View>
@@ -204,7 +270,7 @@ export default function RecordPaymentScreen() {
           <AppInput
             label="Payment Amount *"
             value={amount}
-            onChangeText={setAmount}
+            onChangeText={handleAmountChange}
             placeholder="0"
             prefix="₹"
             keyboardType="numeric"
@@ -242,7 +308,7 @@ export default function RecordPaymentScreen() {
                 <TouchableOpacity
                   key={pm.value}
                   style={[styles.methodButton, isSelected && styles.methodButtonSelected]}
-                  onPress={() => setPaymentMethod(pm.value)}
+                  onPress={() => handlePaymentMethodSelect(pm.value)}
                   activeOpacity={0.8}
                 >
                   <Ionicons name={pm.icon as any} size={16} color={isSelected ? colors.white : colors.primary} />
@@ -254,13 +320,17 @@ export default function RecordPaymentScreen() {
             })}
           </View>
 
-          <AppInput
-            label="Transaction / Reference ID"
-            value={transactionId}
-            onChangeText={setTransactionId}
-            placeholder="e.g. UPI Ref / NEFT ID (Optional)"
-            icon="document-text-outline"
-          />
+          {/* Transaction / Reference ID - Required for UPI & Bank Transfer, Optional for Other, Hidden for Cash */}
+          {paymentMethod !== 'cash' && (
+            <AppInput
+              label={getTransactionIdLabel()}
+              value={transactionId}
+              onChangeText={handleTransactionIdChange}
+              placeholder={getTransactionIdPlaceholder()}
+              icon="document-text-outline"
+              error={errors.transactionId}
+            />
+          )}
         </View>
 
         {/* Attachment Card */}

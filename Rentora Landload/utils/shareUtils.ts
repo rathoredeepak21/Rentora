@@ -2,17 +2,27 @@ import * as Sharing from 'expo-sharing';
 import { Share, Platform } from 'react-native';
 
 export const shareUtils = {
-  async shareFile(fileUri: string, mimeType: string = 'application/pdf'): Promise<boolean> {
+  async shareFile(fileUri: string, mimeType: string = 'application/pdf', dialogTitle: string = 'Share Invoice PDF'): Promise<boolean> {
     try {
       const isAvailable = await Sharing.isAvailableAsync();
       if (!isAvailable) {
         return false;
       }
-      
+
+      // Ensure valid MIME type even if caller accidentally passes filename
+      let resolvedMimeType = 'application/pdf';
+      let resolvedTitle = dialogTitle;
+
+      if (mimeType && mimeType.includes('/')) {
+        resolvedMimeType = mimeType;
+      } else if (mimeType && !mimeType.includes('/')) {
+        resolvedTitle = mimeType;
+      }
+
       await Sharing.shareAsync(fileUri, {
-        mimeType,
-        dialogTitle: 'Share Invoice PDF',
-        UTI: 'com.adobe.pdf',
+        mimeType: resolvedMimeType,
+        dialogTitle: resolvedTitle,
+        UTI: resolvedMimeType === 'application/pdf' ? 'com.adobe.pdf' : undefined,
       });
       return true;
     } catch (e) {

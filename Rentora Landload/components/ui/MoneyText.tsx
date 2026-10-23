@@ -3,7 +3,7 @@ import { Text, TextStyle, StyleSheet } from 'react-native';
 import { useStyles, typography } from '../../theme';
 
 interface MoneyTextProps {
-  amount: number;
+  amount?: number | null;
   style?: TextStyle;
   variant?: 'normal' | 'bold' | 'highlight' | 'danger' | 'success';
 }
@@ -11,15 +11,16 @@ interface MoneyTextProps {
 export const MoneyText: React.FC<MoneyTextProps> = ({ amount, style, variant = 'normal' }) => {
   const styles = useStyles(getStyles);
 
-  const formatCurrency = (val: number): string => {
+  const formatCurrency = (val?: number | null): string => {
+    const num = typeof val === 'number' && !isNaN(val) ? val : Number(val) || 0;
     try {
       return new Intl.NumberFormat('en-IN', {
         style: 'currency',
         currency: 'INR',
         maximumFractionDigits: 0,
-      }).format(val);
+      }).format(num);
     } catch (e) {
-      return `₹${val.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+      return `₹${num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
     }
   };
 

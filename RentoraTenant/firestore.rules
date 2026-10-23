@@ -72,6 +72,20 @@ service cloud.firestore {
       allow delete: if isOwner(resource.data);
     }
 
+    // Settlements Collection
+    match /settlements/{settlementId} {
+      allow read: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        isAssignedTenant(resource.data)
+      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        request.resource.data.ownerId == request.auth.uid
+      );
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
     // Notifications Collection (Tenant & Landlord Push & In-app Notifications)
     match /notifications/{notificationId} {
       allow read: if isAuthenticated() && (

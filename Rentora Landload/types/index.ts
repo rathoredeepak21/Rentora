@@ -65,6 +65,7 @@ export interface Tenant {
   moveOutDate?: string | null;
   monthlyRent: number;
   advanceAmount?: number;
+  securityDeposit?: number;
   status: TenantStatus;
   
   // Tenant App Authentication Linking & Status
@@ -149,6 +150,8 @@ export interface Bill {
   previousDueRemaining?: number;
   currentBillPaid?: number;
   currentBillRemaining?: number;
+  totalPaymentAllocated?: number;
+  excessAdvance?: number;
   monthWiseAccounting?: MonthWiseAccounting;
   
   electricityBillType?: 'fixed' | 'perUnit' | 'none';
@@ -192,6 +195,8 @@ export interface Payment {
   createdAt: string;
 }
 
+export type ExtraStayPolicy = 'fixed30' | 'actualBillingPeriod';
+
 export interface BillSettings {
   id?: string; // ownerId
   ownerName: string;
@@ -202,6 +207,78 @@ export interface BillSettings {
   signatureUrl?: string;
   upiId: string;
   paymentInstructions: string;
+  extraStayPolicy?: ExtraStayPolicy;
+  updatedAt: string;
+}
+
+export interface SettlementAdjustment {
+  type: 'advance_rent' | 'security_deposit' | 'other';
+  label: string;
+  amount: number;
+  action: 'applied_to_dues' | 'refunded' | 'retained';
+  reason?: string;
+}
+
+export interface Settlement {
+  id?: string;
+  settlementNumber: string;
+  ownerId: string;
+  tenantId: string;
+  propertyId: string;
+  unitId: string;
+  tenantName: string;
+  unitNumber?: string;
+  propertyName?: string;
+
+  // Dates
+  moveInDate: string;
+  moveOutDate: string;
+  normalPeriodStartDate?: string;
+  normalPeriodEndDate: string;
+  finalMeterReadingDate?: string;
+
+  // Extra-Stay rent snapshot
+  extraStayPolicy: ExtraStayPolicy;
+  dailyRateBasis: number;
+  periodDays: number;
+  eligibleExtraDays: number;
+  monthlyRent: number;
+  extraStayAmount: number;
+
+  // Final electricity snapshot
+  electricityBillType: 'fixed' | 'perUnit' | 'none';
+  previousMeterReading: number;
+  finalMeterReading: number;
+  electricityUnits: number;
+  electricityRate: number;
+  electricityCharge: number;
+
+  // Financial breakdown
+  outstandingBillsBalance: number;
+  otherCharges: number;
+  otherChargesNotes?: string;
+  totalCharges: number;
+
+  // Advance and Deposit snapshots
+  advanceRentOriginal: number;
+  advanceRentAdjusted: number;
+  advanceRentRefunded: number;
+  advanceRentRemaining: number;
+
+  securityDepositOriginal: number;
+  securityDepositAdjusted: number;
+  securityDepositRefunded: number;
+  securityDepositRemaining: number;
+
+  adjustments: SettlementAdjustment[];
+
+  // Net final settlement
+  finalAmount: number; // positive = payable by tenant, negative = refundable to tenant
+  finalStatus: 'payable' | 'refundable' | 'zero_balance';
+
+  notes?: string;
+  settlementDate: string;
+  createdAt: string;
   updatedAt: string;
 }
 

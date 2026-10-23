@@ -189,26 +189,38 @@ export function decorateTenantBills(
     return createdA.localeCompare(createdB);
   });
 
-  // Calculate total approved payment pool for this tenant (only approved payments count)
-  let availablePaymentPool = 0;
-  if (Array.isArray(payments) && payments.length > 0) {
-    payments.forEach((p) => {
-      if (p.status === 'approved') {
-        availablePaymentPool += Number(p.amount) || 0;
-      }
-    });
-  } else {
-    // Fallback: sum of recorded paidAmount on bills if payments array is empty/omitted
-    availablePaymentPool = bills.reduce((sum, b) => sum + (Number(b.paidAmount) || 0), 0);
-  }
+  // Approved payments only
+  const approvedPayments = Array.isArray(payments)
+    ? payments.filter((p) => p.status === 'approved')
+    : [];
 
-  // Ensure pool is at least the sum of confirmed bill paid amounts
-  const sumRecordedBills = bills.reduce((sum, b) => sum + (Number(b.paidAmount) || 0), 0);
-  availablePaymentPool = Math.max(availablePaymentPool, sumRecordedBills);
+  // Direct payments tagged by billId
+  const directPaymentsMap = new Map<string, number>();
+  approvedPayments.forEach((p) => {
+    if (p.billId) {
+      directPaymentsMap.set(
+        p.billId,
+        (directPaymentsMap.get(p.billId) || 0) + (Number(p.amount) || 0)
+      );
+    }
+  });
 
-  let remainingPaymentPool = availablePaymentPool;
+  // Track remaining direct payment available for each bill
+  const remainingDirectMap = new Map<string, number>(directPaymentsMap);
 
-  const decoratedOldestFirst = sorted.map((bill, index) => {
+  // Total payment pool
+  const totalApprovedPool = approvedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const totalRecordedBills = bills.reduce((sum, b) => sum + (Number(b.paidAmount) || 0), 0);
+  let remainingPaymentPool = Math.max(totalApprovedPool, totalRecordedBills);
+
+  const hasDirectPayments = directPaymentsMap.size > 0;
+  let carryOver = 0;
+  const deductedForOlderMap = new Map<string, number>();
+
+  const resultOldestFirst: Bill[] = [];
+
+  for (let index = 0; index < sorted.length; index++) {
+    const bill = sorted[index];
     const isClosed = isBillClosedOrPaid(bill);
 
     // Current bill charges (subtotal)
@@ -259,7 +271,7 @@ export function decorateTenantBills(
         overallTotalRemaining: 0,
       };
 
-      return {
+      resultOldestFirst.push({
         ...bill,
         subtotal,
         previousDue,
@@ -272,48 +284,122 @@ export function decorateTenantBills(
         currentBillPaid: curPaid,
         currentBillRemaining: 0,
         monthWiseAccounting,
-      } as Bill;
+      } as Bill);
+      continue;
     }
 
     // Bill is open (unpaid or partial)
-    // If this is the first/standalone bill and has manual previousDue, allocate payment to previousDue first
+    const directForThis = remainingDirectMap.get(bill.id || '') || 0;
+    const recordedOnBill = Number(bill.paidAmount) || 0;
+
+    let availableForThis = 0;
+
+    if (directForThis > 0) {
+      availableForThis = directForThis + carryOver;
+      carryOver = 0;
+      remainingPaymentPool = Math.max(0, remainingPaymentPool - directForThis);
+      remainingDirectMap.set(bill.id || '', 0);
+    } else if (hasDirectPayments) {
+      // Direct payments exist for other bills.
+      // Check if a newer bill carries this bill's debt as previousDue (Prompt Test 2)
+      const newerCarryingPrev = sorted.slice(index + 1).find(
+        (nb) => nb.previousDue > 0 && (remainingDirectMap.get(nb.id || '') || 0) > 0
+      );
+      if (newerCarryingPrev) {
+        const newerPay = remainingDirectMap.get(newerCarryingPrev.id || '') || 0;
+        const paidTowardsOlder = Math.min(totalAmount, Math.min(newerCarryingPrev.previousDue, newerPay));
+        availableForThis = paidTowardsOlder + carryOver;
+        carryOver = 0;
+        // Deduct from newer bill's direct payment!
+        remainingDirectMap.set(newerCarryingPrev.id || '', newerPay - paidTowardsOlder);
+        remainingPaymentPool = Math.max(0, remainingPaymentPool - paidTowardsOlder);
+        if (newerCarryingPrev.id) {
+          deductedForOlderMap.set(
+            newerCarryingPrev.id,
+            (deductedForOlderMap.get(newerCarryingPrev.id) || 0) + paidTowardsOlder
+          );
+        }
+      } else {
+        // Find newest bill with remaining direct payment (TEST 5)
+        const newerWithPay = sorted.slice(index + 1).find(
+          (nb) => (remainingDirectMap.get(nb.id || '') || 0) > 0
+        );
+        if (newerWithPay) {
+          const newerPay = remainingDirectMap.get(newerWithPay.id || '') || 0;
+          const fromNewer = Math.min(totalAmount, newerPay);
+          remainingDirectMap.set(newerWithPay.id || '', newerPay - fromNewer);
+          remainingPaymentPool = Math.max(0, remainingPaymentPool - fromNewer);
+          availableForThis = fromNewer + carryOver;
+          carryOver = 0;
+        } else {
+          availableForThis = recordedOnBill + carryOver;
+          carryOver = 0;
+        }
+      }
+    } else {
+      // Untagged pool
+      const fromPool = Math.min(totalAmount, remainingPaymentPool);
+      remainingPaymentPool = Math.max(0, remainingPaymentPool - fromPool);
+      availableForThis = Math.max(recordedOnBill, fromPool) + carryOver;
+      carryOver = 0;
+    }
+
+    if (availableForThis > totalAmount) {
+      carryOver = availableForThis - totalAmount;
+      availableForThis = totalAmount;
+    }
+
+    // Check if an earlier bill in resultOldestFirst was ALREADY cleared and represented this bill's previousDue
+    const priorDecorated = index > 0 ? resultOldestFirst[index - 1] : null;
+    const priorWasCleared = priorDecorated && (priorDecorated.paymentStatus === 'paid' || priorDecorated.remainingAmount === 0);
+
+    // Core month-wise payment allocation:
     let previousDuePaid = 0;
     let previousDueRemaining = previousDue;
 
-    if (index === 0 && previousDue > 0) {
-      previousDuePaid = Math.min(previousDue, remainingPaymentPool);
-      previousDueRemaining = Math.max(0, previousDue - previousDuePaid);
-      remainingPaymentPool = Math.max(0, remainingPaymentPool - previousDuePaid);
-    } else {
-      // For index > 0, prior bills in the array already consumed the payment pool for older dues
-      previousDuePaid = 0;
-      previousDueRemaining = previousDue;
+    if (previousDue > 0) {
+      if (priorWasCleared) {
+        // Prior arrears already cleared by prior payments
+        previousDuePaid = previousDue;
+        previousDueRemaining = 0;
+      } else {
+        // Clear previous arrears FIRST from payment
+        previousDuePaid = Math.min(previousDue, availableForThis);
+        previousDueRemaining = Math.max(0, previousDue - previousDuePaid);
+        availableForThis = Math.max(0, availableForThis - previousDuePaid);
+      }
     }
 
-    // Apply remaining payment pool to this bill's own charges (oldest open bill first)
-    const currentBillPaid = Math.min(subtotal, remainingPaymentPool);
+    // THEN apply remaining payment to current month bill
+    const currentBillPaid = Math.min(subtotal, availableForThis);
     const currentBillRemaining = Math.max(0, subtotal - currentBillPaid);
-    remainingPaymentPool = Math.max(0, remainingPaymentPool - currentBillPaid);
 
-    const paidAmount = index === 0 && previousDue > 0 ? (previousDuePaid + currentBillPaid) : currentBillPaid;
-    const remainingAmount = index === 0 && previousDue > 0 ? (previousDueRemaining + currentBillRemaining) : currentBillRemaining;
+    const totalPaidOnStatement = previousDuePaid + currentBillPaid;
+    const remainingAmount = previousDueRemaining + currentBillRemaining;
+
+    // If an older bill card in sorted already consumed part of this bill's payment for previousDue,
+    // this bill's own paidAmount reflects payment allocated to its own charges (currentBillPaid).
+    const wasDeductedForOlder = (bill.id && deductedForOlderMap.get(bill.id)) || 0;
+    const paidAmount = wasDeductedForOlder > 0 ? currentBillPaid : totalPaidOnStatement;
 
     // Payment status for this bill
     let paymentStatus: PaymentStatus = 'unpaid';
     if (remainingAmount === 0 && totalAmount > 0) {
       paymentStatus = 'paid';
-    } else if (paidAmount > 0) {
+    } else if (totalPaidOnStatement > 0 || currentBillPaid > 0) {
       paymentStatus = 'partial';
     }
 
     const prevStatus: PaymentStatus = previousDueRemaining === 0 ? 'paid' : (previousDuePaid > 0 ? 'partial' : 'unpaid');
     const curStatus: PaymentStatus = currentBillRemaining === 0 ? 'paid' : (currentBillPaid > 0 ? 'partial' : 'unpaid');
 
+    const prevLabel = index > 0 && sorted[index - 1]?.billingMonth
+      ? formatMonthDisplay(sorted[index - 1].billingMonth)
+      : (bill.billingMonth ? `${getPreviousMonthDisplay(bill.billingMonth)} (Arrears)` : 'Previous Month / Arrears');
+
     const monthWiseAccounting: MonthWiseAccounting = {
       hasPreviousDue: previousDue > 0,
-      previousMonthLabel: index > 0 && sorted[index - 1]?.billingMonth
-        ? formatMonthDisplay(sorted[index - 1].billingMonth)
-        : (bill.billingMonth ? `${getPreviousMonthDisplay(bill.billingMonth)} (Arrears)` : 'Previous Month / Arrears'),
+      previousMonthLabel: prevLabel,
       previousMonthOriginal: previousDue,
       previousMonthPaid: previousDuePaid,
       previousMonthRemaining: previousDueRemaining,
@@ -326,11 +412,11 @@ export function decorateTenantBills(
       currentMonthStatus: curStatus,
 
       overallTotalPayable: totalAmount,
-      overallTotalPaid: paidAmount,
+      overallTotalPaid: totalPaidOnStatement,
       overallTotalRemaining: remainingAmount,
     };
 
-    return {
+    resultOldestFirst.push({
       ...bill,
       subtotal,
       previousDue,
@@ -343,11 +429,11 @@ export function decorateTenantBills(
       currentBillPaid,
       currentBillRemaining,
       monthWiseAccounting,
-    } as Bill;
-  });
+    } as Bill);
+  }
 
   // Return sorted newest-first for tenant UI views
-  return decoratedOldestFirst.sort((a, b) => {
+  return resultOldestFirst.sort((a, b) => {
     const monthA = a.billingMonth || '';
     const monthB = b.billingMonth || '';
     if (monthA !== monthB) {

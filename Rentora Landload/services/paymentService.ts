@@ -84,49 +84,33 @@ export const paymentService = {
       throw new Error('Tenant not found');
     }
 
+    const parentPaymentId = payment.parentPaymentId || 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const nowIso = new Date().toISOString();
+
     // 2. Fetch all bills of this tenant
     const allBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
     const decoratedBills = decorateBills(allBills);
     
-    // CRITICAL: Filter out any bill that is already closed or fully paid (remainingAmount <= 0 or status == 'paid')
-    // Old paid bills must NEVER receive any payment allocation!
     // Sort oldest first chronologically: billingMonth -> billNumber -> createdAt
     const outstandingBills = sortBillsChronological(
-      decoratedBills.filter((b) => !isBillClosedOrPaid(b) && (Number(b.remainingAmount) || 0) > 0)
+      decoratedBills.filter((b) => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid')
     );
 
     let remainingPayment = Number(payment.amount) || 0;
-    const parentPaymentId = payment.parentPaymentId || 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
 
-    // 3. Apply payment sequentially to outstanding bills only
+    // 3. Apply payment sequentially to oldest outstanding bills first
     for (const bill of outstandingBills) {
       if (remainingPayment <= 0) break;
 
-      const sub = bill.subtotal !== undefined
-        ? Number(bill.subtotal)
-        : ((Number(bill.rent) || 0) + (Number(bill.electricityCharge) || 0) + (Number(bill.waterCharge) || 0) + (Number(bill.parkingCharge) || 0) + (Number(bill.maintenanceCharge) || 0) + (Number(bill.otherCharges) || 0));
-
-      const needed = Number(bill.remainingAmount) || Math.max(0, sub - (Number(bill.paidAmount) || 0));
+      const needed = Number(bill.remainingAmount) || 0;
       if (needed <= 0) continue;
       const allocatedAmount = Math.min(remainingPayment, needed);
 
       const currentPaid = Number(bill.paidAmount) || 0;
       const newPaidAmount = currentPaid + allocatedAmount;
-      const newRemainingAmount = Math.max(0, sub - newPaidAmount);
-
-      let newStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
-      if (newRemainingAmount === 0 && sub > 0) {
-        newStatus = 'paid';
-      } else if (newPaidAmount > 0) {
-        newStatus = 'partial';
-      }
 
       await billService.updateBill(bill.id!, {
         paidAmount: newPaidAmount,
-        remainingAmount: newRemainingAmount,
-        paymentStatus: newStatus,
-        currentBillPaid: newPaidAmount,
-        currentBillRemaining: newRemainingAmount,
       });
 
       remainingPayment -= allocatedAmount;
@@ -136,6 +120,7 @@ export const paymentService = {
     if (remainingPayment > 0) {
       const currentAdvance = tenant.advanceAmount || 0;
       const newAdvance = currentAdvance + remainingPayment;
+
       await db.updateDoc<Tenant>('tenants', tenant.id!, {
         advanceAmount: newAdvance,
       } as any);
@@ -144,9 +129,25 @@ export const paymentService = {
     // 5. Update the payment document status to approved
     const updatedPayment = await db.updateDoc<Payment>(COLLECTION, paymentId, {
       status: 'approved' as PaymentVerificationStatus,
-      verifiedAt: new Date().toISOString(),
+      verifiedAt: nowIso,
       parentPaymentId,
     });
+
+    // 6. Sync updated decorated states to bills in Firestore
+    const updatedBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
+    const redecorated = decorateBills(updatedBills);
+    for (const b of redecorated) {
+      await billService.updateBill(b.id!, {
+        paidAmount: b.paidAmount,
+        remainingAmount: b.remainingAmount,
+        paymentStatus: b.paymentStatus,
+        previousDuePaid: b.previousDuePaid,
+        previousDueRemaining: b.previousDueRemaining,
+        currentBillPaid: b.currentBillPaid,
+        currentBillRemaining: b.currentBillRemaining,
+        totalPaymentAllocated: b.totalPaymentAllocated,
+      });
+    }
 
     // 6. Dispatch notification to tenant (in-app + Android status-bar push)
     try {
@@ -288,56 +289,38 @@ export const paymentService = {
       throw new Error('Tenant not found');
     }
 
+    const parentPaymentId = 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const nowIso = new Date().toISOString();
+
     // 2. Fetch all bills of this tenant
     const allBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
     const decoratedBills = decorateBills(allBills);
     
-    // CRITICAL: Filter out any bill that is already closed or fully paid (remainingAmount <= 0 or status == 'paid')
-    // Old paid bills must NEVER receive any payment allocation!
     // Sort oldest first chronologically: billingMonth -> billNumber -> createdAt
     const outstandingBills = sortBillsChronological(
-      decoratedBills.filter((b) => !isBillClosedOrPaid(b) && (Number(b.remainingAmount) || 0) > 0)
+      decoratedBills.filter((b) => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid')
     );
 
     let remainingPayment = Number(payment.amount) || 0;
-    const parentPaymentId = 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
     let mainPaymentRef: Payment | null = null;
-    const nowIso = new Date().toISOString();
 
-    // 3. Apply payment sequentially to outstanding bills only
+    // 3. Apply payment sequentially to oldest outstanding bills first
     for (const bill of outstandingBills) {
       if (remainingPayment <= 0) break;
 
-      const sub = bill.subtotal !== undefined
-        ? Number(bill.subtotal)
-        : ((Number(bill.rent) || 0) + (Number(bill.electricityCharge) || 0) + (Number(bill.waterCharge) || 0) + (Number(bill.parkingCharge) || 0) + (Number(bill.maintenanceCharge) || 0) + (Number(bill.otherCharges) || 0));
-
-      const needed = Number(bill.remainingAmount) || Math.max(0, sub - (Number(bill.paidAmount) || 0));
+      const needed = Number(bill.remainingAmount) || 0;
       if (needed <= 0) continue;
       const allocatedAmount = Math.min(remainingPayment, needed);
 
       const currentPaid = Number(bill.paidAmount) || 0;
       const newPaidAmount = currentPaid + allocatedAmount;
-      const newRemainingAmount = Math.max(0, sub - newPaidAmount);
 
-      let newStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
-      if (newRemainingAmount === 0 && sub > 0) {
-        newStatus = 'paid';
-      } else if (newPaidAmount > 0) {
-        newStatus = 'partial';
-      }
-
-      // Update Bill
       await billService.updateBill(bill.id!, {
         paidAmount: newPaidAmount,
-        remainingAmount: newRemainingAmount,
-        paymentStatus: newStatus,
-        currentBillPaid: newPaidAmount,
-        currentBillRemaining: newRemainingAmount,
       });
 
       // Save split payment record
-      const paymentDoc = await db.addDoc<Payment>(COLLECTION, {
+      const splitDoc = await db.addDoc<Payment>(COLLECTION, {
         ownerId: payment.ownerId,
         billId: bill.id!,
         tenantId: payment.tenantId,
@@ -355,7 +338,7 @@ export const paymentService = {
       } as any);
 
       if (!mainPaymentRef) {
-        mainPaymentRef = paymentDoc;
+        mainPaymentRef = splitDoc;
       }
 
       remainingPayment -= allocatedAmount;
@@ -392,7 +375,6 @@ export const paymentService = {
       }
     }
 
-    // Return the payment ref
     if (!mainPaymentRef) {
       mainPaymentRef = await db.addDoc<Payment>(COLLECTION, {
         ...payment,
@@ -400,6 +382,22 @@ export const paymentService = {
         verifiedAt: nowIso,
         parentPaymentId,
       } as any);
+    }
+
+    // 5. Sync updated decorated states to bills in Firestore
+    const updatedBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
+    const redecorated = decorateBills(updatedBills);
+    for (const b of redecorated) {
+      await billService.updateBill(b.id!, {
+        paidAmount: b.paidAmount,
+        remainingAmount: b.remainingAmount,
+        paymentStatus: b.paymentStatus,
+        previousDuePaid: b.previousDuePaid,
+        previousDueRemaining: b.previousDueRemaining,
+        currentBillPaid: b.currentBillPaid,
+        currentBillRemaining: b.currentBillRemaining,
+        totalPaymentAllocated: b.totalPaymentAllocated,
+      });
     }
 
     return mainPaymentRef;

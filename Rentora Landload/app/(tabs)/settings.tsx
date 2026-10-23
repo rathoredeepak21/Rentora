@@ -40,6 +40,12 @@ export default function SettingsScreen() {
       onPress: () => router.push('/settings/bill-customization'),
     },
     {
+      title: 'Extra-Stay Policy',
+      icon: 'calendar-outline',
+      color: '#F59E0B', // Amber
+      onPress: () => router.push('/settings/extra-stay'),
+    },
+    {
       title: 'UPI Payment Details',
       icon: 'card-outline',
       color: colors.secondary,
@@ -117,7 +123,7 @@ export default function SettingsScreen() {
           </TouchableOpacity>
 
           {/* Version Info */}
-          <Text style={styles.versionText}>Rentora Version 1.0.0</Text>
+          <Text style={styles.versionText}>Rentora Version 1.2.7</Text>
         </ScrollView>
       </SafeAreaView>
     </SwipeableTabWrapper>

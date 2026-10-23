@@ -153,10 +153,12 @@ export default function MyBillsScreen() {
             </View>
           </View>
           {renderStatusBadge(
-            item.monthWiseAccounting?.hasPreviousDue
-              ? item.monthWiseAccounting.currentMonthStatus
-              : item.paymentStatus,
-            item.currentBillRemaining !== undefined ? item.currentBillRemaining : item.remainingAmount
+            item.remainingAmount === 0 || item.paymentStatus === 'paid'
+              ? 'paid'
+              : (item.paymentStatus === 'partial' || item.paidAmount > 0 || (item.currentBillPaid || 0) > 0 || (item.previousDuePaid || 0) > 0
+                  ? 'partial'
+                  : 'unpaid'),
+            item.remainingAmount
           )}
         </TouchableOpacity>
 
@@ -192,7 +194,7 @@ export default function MyBillsScreen() {
         <View style={[styles.amountGrid, { backgroundColor: colors.cardSubtle }]}>
           <View style={styles.amountCol}>
             <Text style={[styles.amountLabel, { color: colors.textMuted }]}>
-              {item.previousDue > 0 ? 'Month Bill' : 'Total Bill'}
+              {item.previousDue > 0 ? 'Current Month Bill' : 'Total Bill'}
             </Text>
             <Text style={[styles.amountValue, { color: colors.textPrimary }]}>
               ₹{(item.subtotal !== undefined ? item.subtotal : item.totalAmount).toLocaleString('en-IN')}
@@ -201,7 +203,7 @@ export default function MyBillsScreen() {
 
           <View style={styles.amountCol}>
             <Text style={[styles.amountLabel, { color: colors.textMuted }]}>
-              {item.previousDue > 0 ? 'Month Paid' : 'Paid Amount'}
+              {item.previousDue > 0 ? 'Current Month Paid' : 'Paid Amount'}
             </Text>
             <Text style={[styles.amountValue, { color: colors.success }]}>
               ₹{(item.currentBillPaid !== undefined ? item.currentBillPaid : item.paidAmount).toLocaleString('en-IN')}
@@ -210,7 +212,7 @@ export default function MyBillsScreen() {
 
           <View style={styles.amountCol}>
             <Text style={[styles.amountLabel, { color: colors.textMuted }]}>
-              {item.previousDue > 0 ? 'Month Due' : 'Remaining Due'}
+              {item.previousDue > 0 ? 'Current Month Due' : 'Remaining Due'}
             </Text>
             <Text
               style={[
@@ -232,14 +234,18 @@ export default function MyBillsScreen() {
             <MaterialCommunityIcons name="layers-outline" size={14} color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={[styles.previousDueNoteText, { color: colors.textPrimary }]}>
-                {item.previousDueRemaining === 0
-                  ? `Arrears (₹${item.previousDue.toLocaleString('en-IN')}): Cleared (PAID)`
-                  : `Arrears (₹${item.previousDue.toLocaleString('en-IN')}): Due ₹${(item.previousDueRemaining ?? item.previousDue).toLocaleString('en-IN')}`}
-                {' • '}
-                <Text style={{ fontWeight: '700', color: item.remainingAmount > 0 ? colors.danger : colors.success }}>
-                  Total Statement Balance: ₹{item.remainingAmount.toLocaleString('en-IN')}
+                {`Previous Arrears: ₹${item.previousDue.toLocaleString('en-IN')} • Status: ${
+                  item.previousDueRemaining === 0 ? 'Cleared' : `Due ₹${(item.previousDueRemaining ?? item.previousDue).toLocaleString('en-IN')}`
+                }`}
+                {'\n'}
+                <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
+                  {`Original Total Statement: ₹${item.totalAmount.toLocaleString('en-IN')} • Total Paid Across Statement: ₹${(
+                    item.monthWiseAccounting?.overallTotalPaid ?? item.paidAmount
+                  ).toLocaleString('en-IN')} • Overall Remaining Payable: `}
                 </Text>
-                {' (Payable: ₹' + item.totalAmount.toLocaleString('en-IN') + ')'}
+                <Text style={{ fontWeight: '800', color: item.remainingAmount > 0 ? colors.danger : colors.success }}>
+                  ₹{item.remainingAmount.toLocaleString('en-IN')}
+                </Text>
               </Text>
             </View>
           </View>

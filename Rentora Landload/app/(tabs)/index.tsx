@@ -9,7 +9,7 @@ import MoneyText from '../../components/ui/MoneyText';
 import StatusBadge from '../../components/ui/StatusBadge';
 import db from '../../utils/db';
 import { Property, Unit, Tenant, Bill, Payment } from '../../types';
-import { decorateBills } from '../../services/billService';
+import { decorateBills, calculateOverallPending } from '../../services/billService';
 import { notificationService } from '../../services/notificationService';
 import SwipeableTabWrapper from '../../components/ui/SwipeableTabWrapper';
 

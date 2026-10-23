@@ -1,0 +1,2218 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rentora - Smart Rental & Property Management Platform</title>
+  <meta name="description" content="Rentora is India's premier property & rental management platform. Manage units, tenants, billing periods, electricity meter readings, and move-out settlements with official PDF invoices.">
+  <meta name="keywords" content="Rentora, Property Management, Rent Manager, Landlord App, Tenant Settlement, Electricity Meter Billing">
+  
+  <!-- Google Fonts: Plus Jakarta Sans & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Firebase Compat SDK (v10) for Browser -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+  <!-- Client-side PDF Generation (Local Bundle + CDN Fallback) -->
+  <script src="./assets/js/html2pdf.bundle.min.js"></script>
+  <script>
+    if (typeof html2pdf === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"><\/script>');
+    }
+  </script>
+
+  <!-- Core Stylesheet -->
+  <link rel="stylesheet" href="./assets/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%234F46E5'><path d='M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1V9.5z'/></svg>">
+</head>
+<body>
+
+  <!-- Ambient Background Glows -->
+  <div class="bg-glow-container">
+    <div class="glow-orb glow-1"></div>
+    <div class="glow-orb glow-2"></div>
+    <div class="glow-orb glow-3"></div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Dual Mode Switcher Bar -->
+  <div class="view-mode-banner">
+    <div class="container">
+      <div class="view-mode-wrapper">
+        <div class="view-mode-title">
+          <span class="view-mode-pill">Rentora Suite</span>
+          <span>Switch between the Marketing Landing Showcase and the Live Desktop Landlord Portal</span>
+        </div>
+        <div class="view-switch-tabs">
+          <button id="viewSwitchLanding" class="view-tab-btn active">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            Website & App Showcase
+          </button>
+          <button id="viewSwitchDashboard" class="view-tab-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            Desktop Web Dashboard
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header class="site-header">
+    <div class="container nav-wrapper">
+      <a href="#hero" class="brand-logo" onclick="if(document.getElementById('dashboardView').style.display==='block'||document.getElementById('authView').style.display==='block'){switchView('landing');}">
+        <div class="brand-icon-box">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1V9.5z"/>
+          </svg>
+        </div>
+        <span class="brand-name">Rentora</span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#calculator">Live Calculator</a>
+        <a href="#app-showcase">Mobile App</a>
+        <a href="#spotlight">Settlement Suite</a>
+        <a href="#download">Download APK</a>
+      </nav>
+
+      <div class="nav-actions">
+        <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Theme" aria-label="Toggle Theme">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+        </button>
+        <button class="btn btn-primary launch-dashboard-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          Open Web App
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====================================================================== -->
+  <!-- 1. LANDING PAGE VIEW -->
+  <!-- ====================================================================== -->
+  <main id="landingView">
+    
+    <!-- Hero Section -->
+    <section id="hero" class="hero-section">
+      <div class="container hero-grid">
+        <div class="hero-content">
+          <div class="hero-badge">
+            <span class="hero-badge-pulse"></span>
+            <span>Rentora v1.3.0 Release • Android & Web Platform</span>
+          </div>
+
+          <h1 class="hero-title">
+            India's Smartest <br>
+            <span class="gradient-text">Rental & Property</span> Platform
+          </h1>
+
+          <p class="hero-subtitle">
+            Say goodbye to rental disputes, manual meter calculations, and spreadsheet chaos. Rentora automates unit occupancy, prorated billing, electricity units, and official move-out settlement invoices.
+          </p>
+
+          <div class="hero-cta-group">
+            <a href="./downloads/Rentora_v1.3.0.apk" class="btn btn-emerald btn-lg" download>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              Download APK (v1.3.0)
+            </a>
+            <button class="btn btn-secondary btn-lg launch-dashboard-btn">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+              Explore Desktop Portal
+            </button>
+          </div>
+
+          <div class="hero-meta-strip">
+            <div class="meta-item">
+              <span class="meta-number">100%</span>
+              <span class="meta-label">Automated Billing</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-number">0</span>
+              <span class="meta-label">Settlement Disputes</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-number">₹0</span>
+              <span class="meta-label">Hidden Fees</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-number">Instant</span>
+              <span class="meta-label">PDF Invoicing</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-visual-card">
+          <img src="./assets/images/hero-mockup.jpg" alt="Rentora Mobile & Desktop Platform Interface Mockup" loading="lazy">
+          <div class="hero-visual-overlay">
+            <div class="hero-overlay-tag">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              <span>Verified Cloud Sync & Real-time Calculations</span>
+            </div>
+            <span style="font-size: 0.78rem; color: #9CA3AF;">Android & Web</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Core Features Grid -->
+    <section id="features" class="section">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-tag">Powerful Capabilities</span>
+          <h2 class="section-title">Built specifically for Indian Landlords & Property Owners</h2>
+          <p class="section-desc">From single-building owners to multi-floor residency managers, Rentora handles every aspect of the tenant lifecycle.</p>
+        </div>
+
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-icon-box icon-indigo">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            </div>
+            <h3 class="feature-title">Prorated Billing Engine</h3>
+            <p class="feature-text">Automatically calculate partial month stays with Fixed 30-day or Actual Calendar Days policies. Zero manual math or spreadsheet guesswork.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon-box icon-amber">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            </div>
+            <h3 class="feature-title">Submeter Electricity Billing</h3>
+            <p class="feature-text">Record initial, previous, and final meter readings. Rentora auto-computes consumed units and computes precise bills based on your custom per-unit tariff.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon-box icon-emerald">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            </div>
+            <h3 class="feature-title">Official PDF Settlements</h3>
+            <p class="feature-text">Generate professional, itemized Move-Out Settlement invoices instantly with advance deductions, security balance, and direct WhatsApp sharing.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon-box icon-cyan">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            </div>
+            <h3 class="feature-title">Real-Time Unit Status</h3>
+            <p class="feature-text">Categorize units as Occupied, Vacant, or Under Maintenance with a single tap. View complete historical logs of past tenants per room.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon-box icon-purple">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            </div>
+            <h3 class="feature-title">Active & Vacated Roster</h3>
+            <p class="feature-text">Seamlessly transition tenants from active billing to vacated status with full archival, keeping your active roster clean and up-to-date.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon-box icon-red">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            </div>
+            <h3 class="feature-title">Cloud Sync & Security</h3>
+            <p class="feature-text">Powered by Google Cloud Firebase infrastructure with granular Firestore security rules, ensuring your rental data is private and always backed up.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PHASE 6: GENUINE MOBILE APP SCREENSHOT SHOWCASE -->
+    <section id="app-showcase" class="app-screens-section">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-tag">Native Android App Showcase</span>
+          <h2 class="section-title">Actual Screens From The Rentora Mobile App</h2>
+          <p class="section-desc">Inspect genuine, live interfaces captured directly from the Rentora Landlord Android application.</p>
+        </div>
+
+        <div class="phone-mockups-container">
+          <!-- Screen 1: Vacation & Settlement -->
+          <div class="phone-mockup-wrapper">
+            <div class="phone-device-frame">
+              <div class="phone-notch-bar"></div>
+              <img src="./assets/images/app-screen-vacate.jpg" alt="Rentora Android Mobile App Move-Out Vacation Screen" class="phone-screen-img" loading="lazy">
+            </div>
+            <div class="phone-caption-box">
+              <h3 class="phone-caption-title">Instant Move-Out Proration</h3>
+              <p class="phone-caption-sub">Exact day calculation, electricity units tariff billing, security deposit adjustment, and live payable balance.</p>
+            </div>
+          </div>
+
+          <!-- Screen 2: PDF Settlement Statement -->
+          <div class="phone-mockup-wrapper">
+            <div class="phone-device-frame">
+              <div class="phone-notch-bar"></div>
+              <img src="./assets/images/app-screen-settlement.png" alt="Rentora Android Mobile App Settlement Statement and PDF Sharing Screen" class="phone-screen-img" loading="lazy">
+            </div>
+            <div class="phone-caption-box">
+              <h3 class="phone-caption-title">Itemized Statement & PDF Sharing</h3>
+              <p class="phone-caption-sub">Comprehensive financial summary with official PDF settlement statements shareable directly via WhatsApp or email.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Settlement Calculator Widget -->
+    <section id="calculator" class="section" style="background: var(--bg-surface-elevated);">
+      <div class="container">
+        <div class="section-header">
+          <span class="section-tag">Live Interactive Tool</span>
+          <h2 class="section-title">Test the Move-Out & Extra Stay Engine</h2>
+          <p class="section-desc">Experience the exact calculation logic running inside the Rentora Android App and Cloud Engine.</p>
+        </div>
+
+        <div class="calc-showcase-box">
+          <div class="calc-inputs-col">
+            <div class="form-group">
+              <label class="form-label" for="calcMonthlyRent">Monthly Rent (₹)</label>
+              <input type="number" id="calcMonthlyRent" class="form-control" value="12000" min="0" step="500">
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="calcPeriodEnd">Normal Period End</label>
+                <input type="date" id="calcPeriodEnd" class="form-control">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="calcMoveOut">Actual Move-Out Date</label>
+                <input type="date" id="calcMoveOut" class="form-control">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Calculation Policy</label>
+              <div class="radio-toggle-group">
+                <label class="radio-toggle-label active">
+                  <input type="radio" name="calcPolicy" value="fixed30" checked> Fixed 30 Days (Standard)
+                </label>
+                <label class="radio-toggle-label">
+                  <input type="radio" name="calcPolicy" value="actual"> Actual Month Days
+                </label>
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="calcPrevMeter">Previous Meter Unit</label>
+                <input type="number" id="calcPrevMeter" class="form-control" value="450" min="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="calcFinalMeter">Final Meter Unit</label>
+                <input type="number" id="calcFinalMeter" class="form-control" value="476" min="0">
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="calcElecRate">Electricity Rate (₹/unit)</label>
+                <input type="number" id="calcElecRate" class="form-control" value="10" min="1">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="calcAdvance">Advance Adjusted (₹)</label>
+                <input type="number" id="calcAdvance" class="form-control" value="0" min="0">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="calcDeposit">Security Deposit to Deduct/Refund (₹)</label>
+              <input type="number" id="calcDeposit" class="form-control" value="15000" min="0">
+            </div>
+          </div>
+
+          <div class="calc-summary-card">
+            <div>
+              <div class="summary-header">
+                <div class="summary-title">Settlement Breakdown</div>
+                <div class="summary-sub">Real-time proration based on your entries</div>
+              </div>
+
+              <div class="summary-rows">
+                <div class="summary-row">
+                  <span>Extra Stay Duration</span>
+                  <strong id="summaryExtraDays">5 day(s)</strong>
+                </div>
+                <div class="summary-row">
+                  <span>Computed Daily Rate</span>
+                  <span id="summaryDailyRate">₹400.00/day</span>
+                </div>
+                <div class="summary-row bold">
+                  <span>Extra Stay Rent</span>
+                  <span id="summaryExtraRent">₹2,000.00</span>
+                </div>
+
+                <div class="summary-divider"></div>
+
+                <div class="summary-row">
+                  <span>Electricity Consumed</span>
+                  <span id="summaryElecUnits">26 units</span>
+                </div>
+                <div class="summary-row bold">
+                  <span>Electricity Charge</span>
+                  <span id="summaryElecCharge">₹260.00</span>
+                </div>
+
+                <div class="summary-divider"></div>
+
+                <div class="summary-row bold">
+                  <span>Total Charges</span>
+                  <span id="summaryTotalCharges" style="color: var(--primary);">₹2,260.00</span>
+                </div>
+
+                <div class="summary-row deduction">
+                  <span>Less: Advance Adjusted</span>
+                  <span id="summaryAdvanceAdjusted">-₹0.00</span>
+                </div>
+                <div class="summary-row deduction">
+                  <span>Less: Security Deposit</span>
+                  <span id="summaryDepositAdjusted">-₹15,000.00</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="summary-net-box">
+              <div id="summaryNetLabel" class="summary-net-label">REFUNDABLE TO TENANT</div>
+              <div id="summaryNetAmount" class="summary-net-amount" style="color: #10B981;">₹12,740.00</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Visual Spotlight Section -->
+    <section id="spotlight" class="section">
+      <div class="container hero-grid" style="align-items: center;">
+        <div class="hero-visual-card">
+          <img src="./assets/images/billing-feature.jpg" alt="Rentora Billing & Move-Out Settlement Feature" loading="lazy">
+        </div>
+        <div class="hero-content">
+          <div class="hero-badge" style="background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.3); color: #34D399;">
+            <span>Dispute-Proof Invoicing</span>
+          </div>
+          <h2 class="section-title">Transparent settlements that both landlords and tenants love</h2>
+          <p class="hero-subtitle">
+            Never argue over partial month dates or meter units again. Rentora generates crystal-clear itemized receipts that can be printed or shared as an official PDF straight to WhatsApp.
+          </p>
+          <ul style="list-style: none; display: flex; flex-direction: column; gap: 12px; margin-top: 8px;">
+            <li style="display: flex; align-items: center; gap: 10px; font-size: 0.95rem; color: var(--text-secondary);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              Automated safe date fallbacks that prevent application crashes
+            </li>
+            <li style="display: flex; align-items: center; gap: 10px; font-size: 0.95rem; color: var(--text-secondary);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              Automatic status transition: unit resets to 'Vacant' immediately
+            </li>
+            <li style="display: flex; align-items: center; gap: 10px; font-size: 0.95rem; color: var(--text-secondary);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              Historic records saved securely to the Firestore cloud database
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Download Center Section -->
+    <section id="download" class="section" style="padding-top: 40px; padding-bottom: 90px;">
+      <div class="container">
+        <div class="download-box">
+          <div>
+            <div class="download-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              OFFICIAL ANDROID RELEASE
+            </div>
+            <h2 class="download-title">Get Rentora for Android</h2>
+            <p class="download-text">
+              Directly download and install the latest APK. No Google Play account required. Complete with all vacation handling, PDF sharing, and meter calculation enhancements.
+            </p>
+            <div class="download-actions">
+              <a href="./downloads/Rentora_v1.3.0.apk" class="btn btn-emerald btn-lg" download>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Download Rentora_v1.3.0.apk
+              </a>
+              <span class="apk-meta-badge">Version 1.3.0 (Build 20) • 94.8 MB • Android 8.0+</span>
+            </div>
+          </div>
+
+          <div class="qr-card">
+            <div class="qr-code-box">
+              <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="#111827" stroke-width="1.5">
+                <rect x="2" y="2" width="8" height="8" rx="1" fill="#111827"/>
+                <rect x="14" y="2" width="8" height="8" rx="1" fill="#111827"/>
+                <rect x="2" y="14" width="8" height="8" rx="1" fill="#111827"/>
+                <rect x="4" y="4" width="4" height="4" fill="#FFFFFF"/>
+                <rect x="16" y="4" width="4" height="4" fill="#FFFFFF"/>
+                <rect x="4" y="16" width="4" height="4" fill="#FFFFFF"/>
+                <rect x="14" y="14" width="3" height="3" fill="#111827"/>
+                <rect x="19" y="14" width="3" height="3" fill="#111827"/>
+                <rect x="14" y="19" width="8" height="3" fill="#111827"/>
+                <rect x="11" y="5" width="2" height="5" fill="#111827"/>
+                <rect x="5" y="11" width="5" height="2" fill="#111827"/>
+              </svg>
+            </div>
+            <div class="qr-label">Scan to Download on Phone</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <div class="brand-logo">
+              <div class="brand-icon-box" style="width: 32px; height: 32px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1V9.5z"/></svg>
+              </div>
+              <span class="brand-name">Rentora</span>
+            </div>
+            <p class="footer-desc">
+              Comprehensive property & rental administration software engineered for modern Indian property owners.
+            </p>
+          </div>
+
+          <div>
+            <h4 class="footer-col-title">Navigation</h4>
+            <ul class="footer-links">
+              <li><a href="#hero">Home</a></li>
+              <li><a href="#features">Features</a></li>
+              <li><a href="#app-showcase">Mobile App</a></li>
+              <li><a href="#calculator">Live Calculator</a></li>
+              <li><a href="#download">Download APK</a></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 class="footer-col-title">Platforms</h4>
+            <ul class="footer-links">
+              <li><a href="#download">Android Mobile App</a></li>
+              <li><a href="#" class="launch-dashboard-btn">Desktop Web Dashboard</a></li>
+              <li><a href="./downloads/Rentora_v1.3.0.apk">Release Notes v1.3.0</a></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 class="footer-col-title">Security & Tech</h4>
+            <ul class="footer-links">
+              <li><a href="javascript:void(0)">Google Cloud Firestore</a></li>
+              <li><a href="javascript:void(0)">End-to-End Encryption</a></li>
+              <li><a href="javascript:void(0)">Real-time Web Sync</a></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="footer-bottom">
+          <div>© 2026 Rentora Platform. All rights reserved.</div>
+          <div>Crafted with precision for Landlords & Tenants.</div>
+        </div>
+      </div>
+    </footer>
+
+  </main>
+
+  <!-- ====================================================================== -->
+  <!-- 2. DEDICATED AUTHENTICATION SCREEN (SEM-TU-SEM MOBILE APP LOGIN/SIGNUP) -->
+  <!-- ====================================================================== -->
+  <div id="authView">
+    <div class="auth-page-wrapper">
+      
+      <div class="auth-back-nav" onclick="switchView('landing')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+        <span>Back to Website Showcase</span>
+      </div>
+
+      <div class="auth-header">
+        <div class="auth-logo-circle">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1V9.5z"/>
+          </svg>
+        </div>
+        <h2 class="auth-app-title">Rentora</h2>
+        <p class="auth-tagline">Owner & Billing Manager</p>
+      </div>
+
+      <div class="auth-card">
+        
+        <div class="auth-tabs-wrapper">
+          <button id="authTabSignIn" class="auth-tab-btn active" onclick="setAuthMode('signin')">
+            Sign In
+          </button>
+          <button id="authTabSignUp" class="auth-tab-btn" onclick="setAuthMode('signup')">
+            Create Account
+          </button>
+        </div>
+
+        <div id="authAlertBox" class="auth-alert-box auth-alert-error"></div>
+
+        <!-- 1. SIGN IN FORM -->
+        <form id="authSignInForm" onsubmit="handleAuthSubmit(event, 'signin')">
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div class="form-group">
+              <label class="form-label" for="authLoginEmail">Email Address *</label>
+              <input type="email" id="authLoginEmail" class="form-control" placeholder="name@email.com" required autocomplete="email">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="authLoginPassword">Password *</label>
+              <input type="password" id="authLoginPassword" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+            </div>
+
+            <button type="submit" id="authSignInBtn" class="btn btn-primary btn-lg" style="width: 100%; margin-top: 6px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
+              Sign In to Account
+            </button>
+          </div>
+        </form>
+
+        <!-- 2. CREATE ACCOUNT FORM (SIGN UP) -->
+        <form id="authSignUpForm" style="display: none;" onsubmit="handleAuthSubmit(event, 'signup')">
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div class="form-group">
+              <label class="form-label" for="authRegisterName">Full Name *</label>
+              <input type="text" id="authRegisterName" class="form-control" placeholder="e.g. Ramesh Kumar" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="authRegisterEmail">Email Address *</label>
+              <input type="email" id="authRegisterEmail" class="form-control" placeholder="name@email.com" required autocomplete="email">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="authRegisterPassword">Password * (Min 6 Characters)</label>
+              <input type="password" id="authRegisterPassword" class="form-control" placeholder="Minimum 6 characters" minlength="6" required autocomplete="new-password">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="authRegisterPhone">Phone Number (Optional)</label>
+              <input type="tel" id="authRegisterPhone" class="form-control" placeholder="+91 98765 43210">
+            </div>
+
+            <button type="submit" id="authSignUpBtn" class="btn btn-emerald btn-lg" style="width: 100%; margin-top: 6px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+              Create Landlord Account
+            </button>
+          </div>
+        </form>
+
+        <div class="auth-divider">OR</div>
+
+        <button type="button" class="btn-google" onclick="handleGoogleAuth()">
+          <svg width="18" height="18" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.87c2.26-2.09 3.675-5.17 3.675-9.15z"/>
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.05c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.25v3.15C3.25 21.36 7.33 24 12 24z"/>
+            <path fill="#FBBC05" d="M5.27 14.24c-.25-.72-.38-1.49-.38-2.24 0-.75.13-1.52.38-2.24V6.61H1.25C.45 8.22 0 10.06 0 12c0 1.94.45 3.78 1.25 5.39l4.02-3.15z"/>
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.25 2.64 1.25 6.61l4.02 3.15c.95-2.85 3.6-4.96 6.73-4.96z"/>
+          </svg>
+          Continue with Google
+        </button>
+
+        <button type="button" class="btn btn-secondary btn-sm" style="width: 100%; border-style: dashed;" onclick="enterDemoMode()">
+          Explore Demo Mode (Krishna Residency Sample Data)
+        </button>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- 3. DESKTOP WEB APP DASHBOARD (AUTHENTICATED PORTAL VIEW) -->
+  <!-- ====================================================================== -->
+  <div id="dashboardView">
+    <div class="portal-container">
+      
+      <!-- Portal Sidebar -->
+      <aside class="portal-sidebar">
+        <div class="portal-user-badge">
+          <div class="user-avatar" id="sidebarAvatar">RL</div>
+          <div style="flex: 1; overflow: hidden;">
+            <div id="sidebarUserName" style="font-weight: 700; font-size: 0.95rem; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">Rentora Landlord</div>
+            <div id="sidebarUserSub" style="font-size: 0.78rem; color: var(--text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">Cloud Connected</div>
+          </div>
+        </div>
+
+        <div id="sidebarAuthCard" style="padding: 12px; border-radius: var(--radius-sm); background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 0.76rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase;">Cloud Database</span>
+            <span id="cloudStatusBadge" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; color: var(--secondary); font-weight: 700;">
+              <span class="hero-badge-pulse" style="width: 6px; height: 6px;"></span> Live
+            </span>
+          </div>
+          <div id="authActionContainer"></div>
+        </div>
+
+        <ul class="portal-nav-menu">
+          <li id="nav-overview" class="portal-nav-item active">
+            <button onclick="switchDashboardTab('overview')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+              Overview
+            </button>
+          </li>
+          <li id="nav-properties" class="portal-nav-item">
+            <button onclick="switchDashboardTab('properties')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path><path d="M9 9h1"></path><path d="M9 13h1"></path><path d="M9 17h1"></path><path d="M14 9h1"></path><path d="M14 13h1"></path><path d="M14 17h1"></path></svg>
+              Properties (<span id="sidebarPropertyCount">0</span>)
+            </button>
+          </li>
+          <li id="nav-units" class="portal-nav-item">
+            <button onclick="switchDashboardTab('units')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+              Rooms & Units (<span id="sidebarUnitCount">0</span>)
+            </button>
+          </li>
+          <li id="nav-tenants" class="portal-nav-item">
+            <button onclick="switchDashboardTab('tenants')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
+              Tenant Directory (<span id="sidebarTenantCount">0</span>)
+            </button>
+          </li>
+          <li id="nav-bills" class="portal-nav-item">
+            <button onclick="switchDashboardTab('bills')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              Bills & Payments (<span id="sidebarBillCount">0</span>)
+            </button>
+          </li>
+          <li id="nav-settlements" class="portal-nav-item">
+            <button onclick="switchDashboardTab('settlements')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+              Settlement Invoices
+            </button>
+          </li>
+          <li id="nav-settings" class="portal-nav-item">
+            <button onclick="switchDashboardTab('settings')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              Settings
+            </button>
+          </li>
+        </ul>
+
+        <div style="margin-top: auto; padding: 14px; border-radius: var(--radius-sm); background: var(--bg-surface-elevated); font-size: 0.78rem; color: var(--text-secondary);">
+          <div style="font-weight: 700; color: var(--text-main); margin-bottom: 2px;">Firebase Project</div>
+          <div style="font-family: monospace; color: var(--primary);">rentora-31c64</div>
+        </div>
+      </aside>
+
+      <!-- Portal Main Content -->
+      <main class="portal-main">
+        
+        <!-- Topbar with Property Switcher & Actions -->
+        <div class="portal-topbar">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="font-size: 0.8rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px;">Active Property</div>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <select id="propertySelectDropdown" class="form-control" style="font-weight: 700; font-size: 1.15rem; min-width: 260px; padding: 6px 12px; cursor: pointer;" onchange="handlePropertySwitch(this.value)">
+                <!-- Dynamically populated with user's real properties -->
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="openAddPropertyModal()" title="Add another building or property">
+                + Add Property
+              </button>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+            <button class="btn btn-secondary btn-sm" onclick="openAddUnitModal()">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              + Add Unit
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="openAddTenantModal()">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+              + Add Tenant
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="switchView('landing')" title="View Public Landing Page">
+              Website Home
+            </button>
+            <button class="btn btn-secondary btn-sm" style="color: var(--danger);" onclick="handleSignOut()" title="Log out from account">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+              Sign Out
+            </button>
+          </div>
+        </div>
+
+        <!-- Metric Cards -->
+        <div class="portal-stats-grid">
+          <div class="stat-metric-card">
+            <div class="stat-icon icon-indigo">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-count" id="statTotalProperties">0</span>
+              <span class="stat-desc">Total Properties</span>
+            </div>
+          </div>
+
+          <div class="stat-metric-card">
+            <div class="stat-icon icon-cyan">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-count" id="statTotalUnits">0</span>
+              <span class="stat-desc">Total Units</span>
+            </div>
+          </div>
+
+          <div class="stat-metric-card">
+            <div class="stat-icon icon-emerald">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-count" id="statOccupiedUnits">0</span>
+              <span class="stat-desc" id="statOccupancyRate">Occupied (0%)</span>
+            </div>
+          </div>
+
+          <div class="stat-metric-card">
+            <div class="stat-icon icon-purple">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+            </div>
+            <div class="stat-info">
+              <span class="stat-count" id="statMonthlyRent">₹0</span>
+              <span class="stat-desc">Active Monthly Rent</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Loading Indicator for Authenticated Dashboard -->
+        <div id="portalLoadingIndicator" class="portal-loading-box" style="display: none;">
+          <div class="spinner-ring"></div>
+          <div>Loading your Rentora account data from cloud...</div>
+        </div>
+
+        <!-- Panel 1: Overview -->
+        <div id="panel-overview" class="dashboard-panel active">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="font-family: var(--font-heading); font-size: 1.25rem;">Active Property Units</h3>
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">Live status from your Rentora cloud</span>
+          </div>
+
+          <div id="portalUnitsGrid" class="units-grid"></div>
+        </div>
+
+        <!-- Panel 2: Properties Management -->
+        <div id="panel-properties" class="dashboard-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <h3 style="font-family: var(--font-heading); font-size: 1.25rem;">All Landlord Properties</h3>
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Manage your buildings, flats, and residency portfolios.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openAddPropertyModal()">+ Add New Property</button>
+          </div>
+
+          <div id="portalPropertiesGrid" class="properties-grid"></div>
+        </div>
+
+        <!-- Panel 3: Units Full List -->
+        <div id="panel-units" class="dashboard-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <h3 style="font-family: var(--font-heading); font-size: 1.25rem;">Units & Submeters</h3>
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Manage submeters, assigned tenants, and unit occupancy.</p>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openAddUnitModal()">+ Add New Unit</button>
+          </div>
+          <div class="units-grid" id="portalUnitsFullGrid"></div>
+        </div>
+
+        <!-- Panel 4: Tenants Directory -->
+        <div id="panel-tenants" class="dashboard-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <h3 style="font-family: var(--font-heading); font-size: 1.25rem;">Tenant Directory & Roster</h3>
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Inspect active tenants, view profile details, or process move-out settlements.</p>
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button id="tabBtn-active" class="btn btn-secondary btn-sm tenant-tab-btn active" onclick="filterPortalTenants('active')">
+                Active Tenants (<span id="activeTenantCount">0</span>)
+              </button>
+              <button id="tabBtn-vacated" class="btn btn-secondary btn-sm tenant-tab-btn" onclick="filterPortalTenants('vacated')">
+                Vacated / Settled (<span id="vacatedTenantCount">0</span>)
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="openAddTenantModal()">+ New Tenant</button>
+            </div>
+          </div>
+
+          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface-elevated); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">
+                  <th style="padding: 14px 16px;">Tenant Name</th>
+                  <th style="padding: 14px 16px;">Phone</th>
+                  <th style="padding: 14px 16px;">Property & Unit</th>
+                  <th style="padding: 14px 16px;">Monthly Rent</th>
+                  <th style="padding: 14px 16px;">Status</th>
+                  <th style="padding: 14px 16px; text-align: right;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="portalTenantsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Panel 5: Bills & Monthly Invoices (Dedicated Feature) -->
+        <div id="panel-bills" class="dashboard-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <h3 style="font-family: var(--font-heading); font-size: 1.25rem;">Bills & Monthly Invoices</h3>
+              <p style="font-size: 0.85rem; color: var(--text-secondary);">Manage monthly rent bills, submeter electricity calculation, and payment status.</p>
+            </div>
+
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-secondary btn-sm" onclick="openRecordPaymentModal()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                Record Payment
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="openCreateBillModal()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                + Create New Bill
+              </button>
+            </div>
+          </div>
+
+          <!-- KPI Metric Cards for Bills -->
+          <div class="bills-summary-grid">
+            <div class="bill-summary-card">
+              <div class="bill-summary-icon" style="background: rgba(239, 68, 68, 0.12); color: #EF4444;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+              </div>
+              <div class="bill-summary-info">
+                <span class="bill-summary-amount" id="billStatPendingAmount" style="color: #EF4444;">₹0</span>
+                <span class="bill-summary-label">Total Outstanding Dues</span>
+              </div>
+            </div>
+
+            <div class="bill-summary-card">
+              <div class="bill-summary-icon" style="background: rgba(16, 185, 129, 0.12); color: #10B981;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              </div>
+              <div class="bill-summary-info">
+                <span class="bill-summary-amount" id="billStatPaidAmount" style="color: #10B981;">₹0</span>
+                <span class="bill-summary-label">Total Payments Collected</span>
+              </div>
+            </div>
+
+            <div class="bill-summary-card">
+              <div class="bill-summary-icon" style="background: rgba(245, 158, 11, 0.12); color: #F59E0B;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+              </div>
+              <div class="bill-summary-info">
+                <span class="bill-summary-amount" id="billStatPendingCount">0</span>
+                <span class="bill-summary-label">Pending / Unpaid Bills</span>
+              </div>
+            </div>
+
+            <div class="bill-summary-card">
+              <div class="bill-summary-icon" style="background: rgba(79, 70, 229, 0.12); color: #4F46E5;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+              </div>
+              <div class="bill-summary-info">
+                <span class="bill-summary-amount" id="billStatPaidCount">0</span>
+                <span class="bill-summary-label">Settled / Closed Bills</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filter & Search Toolbar -->
+          <div class="bills-filter-bar">
+            <div class="bill-filter-tabs">
+              <button class="bill-filter-btn active" id="filterBill-all" onclick="filterBills('all')">
+                All Bills (<span id="billFilterCountAll">0</span>)
+              </button>
+              <button class="bill-filter-btn" id="filterBill-pending" onclick="filterBills('pending')">
+                Pending / Unpaid (<span id="billFilterCountPending">0</span>)
+              </button>
+              <button class="bill-filter-btn" id="filterBill-paid" onclick="filterBills('paid')">
+                Fully Paid (<span id="billFilterCountPaid">0</span>)
+              </button>
+            </div>
+
+            <div class="bill-search-wrapper">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="billSearchInput" class="form-control" placeholder="Search tenant, unit, bill #..." oninput="handleBillSearch(this.value)">
+            </div>
+          </div>
+
+          <!-- Bills Table -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface-elevated); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">
+                  <th style="padding: 14px 16px;">Bill Number & Month</th>
+                  <th style="padding: 14px 16px;">Tenant & Unit</th>
+                  <th style="padding: 14px 16px;">Total Amount</th>
+                  <th style="padding: 14px 16px;">Paid / Remaining</th>
+                  <th style="padding: 14px 16px;">Due Date</th>
+                  <th style="padding: 14px 16px;">Status</th>
+                  <th style="padding: 14px 16px; text-align: right;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="portalBillsTableBody"></tbody>
+            </table>
+          </div>
+          <div id="portalBillsEmptyState" style="display: none;"></div>
+        </div>
+
+        <!-- Panel 6: Settlements Invoices -->
+        <div id="panel-settlements" class="dashboard-panel">
+          <div style="margin-bottom: 24px;">
+            <h3 style="font-family: var(--font-heading); font-size: 1.25rem;">Final Move-Out Settlements</h3>
+            <p style="font-size: 0.85rem; color: var(--text-secondary);">Historical move-out settlement statements recorded in Firestore.</p>
+          </div>
+
+          <div id="portalSettlementsList" style="display: flex; flex-direction: column; gap: 16px;"></div>
+        </div>
+
+        <!-- Panel 7: Settings & Landlord Configuration -->
+        <div id="panel-settings" class="dashboard-panel">
+          <div style="margin-bottom: 24px;">
+            <h3 style="font-family: var(--font-heading); font-size: 1.25rem;">Landlord Settings & Business Profile</h3>
+            <p style="font-size: 0.85rem; color: var(--text-secondary);">Configure your landlord profile, UPI payment gateway, and bill customization (synchronized 1:1 with Rentora mobile app).</p>
+          </div>
+
+          <form id="formSettings" onsubmit="handleSaveSettings(event)">
+            <!-- Card 1: Landlord Profile Details -->
+            <div class="form-section-card" style="margin-bottom: 20px;">
+              <div class="form-section-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                <span>Landlord & Business Profile</span>
+              </div>
+              <div class="input-row">
+                <div class="form-group">
+                  <label class="form-label" for="settingsOwnerName">Owner / Landlord Full Name *</label>
+                  <input type="text" id="settingsOwnerName" class="form-control" placeholder="e.g. Ramesh Kumar" required>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="settingsBusinessName">Business / Estate / Property Name</label>
+                  <input type="text" id="settingsBusinessName" class="form-control" placeholder="e.g. RK Rentals, Krishna Residency">
+                </div>
+              </div>
+              <div class="input-row">
+                <div class="form-group">
+                  <label class="form-label" for="settingsPhone">Billing Contact Phone Number *</label>
+                  <input type="tel" id="settingsPhone" class="form-control" placeholder="e.g. +91 98765 43210" required>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="settingsAddress">Business Address (Printed on Invoices)</label>
+                  <input type="text" id="settingsAddress" class="form-control" placeholder="e.g. Sector 62, Noida, Uttar Pradesh">
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 2: UPI Payment Configuration -->
+            <div class="form-section-card" style="margin-bottom: 20px;">
+              <div class="form-section-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                <span>UPI Payment Configuration</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="settingsUpiId">Your UPI ID (VPA) *</label>
+                <div style="position: relative;">
+                  <input type="text" id="settingsUpiId" class="form-control" placeholder="e.g. landlord@upi, 9876543210@paytm" style="font-family: monospace; font-size: 1rem;">
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">Tenants can scan the invoice QR code or transfer directly to this UPI address.</div>
+              </div>
+
+              <div class="info-banner-box">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                <div>
+                  <strong>Direct Landlord Settlement:</strong> Rentora auto-embeds a dynamic payment QR code with this UPI ID into all generated bills and downloadable PDF invoices. Payments are routed directly to your bank account without intermediary commission. You verify actual bank receipts and record collections in the app.
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3: Bill Customization & Policies -->
+            <div class="form-section-card" style="margin-bottom: 24px;">
+              <div class="form-section-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                <span>Bill Customization & Rental Policies</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="settingsPaymentInstructions">Payment Instructions Note (Printed at bottom of Bills)</label>
+                <textarea id="settingsPaymentInstructions" class="form-control" rows="2" placeholder="e.g. Please pay by the due date to avoid late fees. Kindly send a payment screenshot for verification."></textarea>
+              </div>
+
+              <div class="input-row">
+                <div class="form-group">
+                  <label class="form-label" for="settingsExtraStayPolicy">Extra-Stay Rent Calculation Policy</label>
+                  <select id="settingsExtraStayPolicy" class="form-control">
+                    <option value="fixed30">Fixed 30-Day Basis (Standard 30 days divisor for daily rent)</option>
+                    <option value="actualBillingPeriod">Actual Calendar Days (Divides by 28/29/30/31 depending on month)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="settingsLogoUrl">Business Logo URL (Optional)</label>
+                  <input type="url" id="settingsLogoUrl" class="form-control" placeholder="https://... image link for invoice header">
+                </div>
+              </div>
+            </div>
+
+            <!-- Footer Save Actions -->
+            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface-elevated); padding: 16px 20px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 12px;">
+              <div id="settingsLastSavedNotice" style="font-size: 0.82rem; color: var(--text-secondary);">
+                Settings are synced in real-time with your Rentora Mobile App account.
+              </div>
+              <div style="display: flex; gap: 10px;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="populateSettingsForm()">
+                  Discard Changes
+                </button>
+                <button type="submit" id="saveSettingsBtn" class="btn btn-primary btn-sm">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                  Save Settings
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- MODALS (PHASE 3, 4: PROPERTIES & TENANTS MANAGEMENT) -->
+  <!-- ====================================================================== -->
+
+  <!-- 1. ADD PROPERTY MODAL (PHASE 3A) -->
+  <div id="modalAddProperty" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+          Add New Property
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalAddProperty')">&times;</button>
+      </div>
+      <form id="formAddProperty" onsubmit="handleAddProperty(event)">
+        <div class="modal-body">
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="propName">Property Name *</label>
+              <input type="text" id="propName" class="form-control" placeholder="e.g. Krishna Residency, Green Villa" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="propType">Property Type *</label>
+              <select id="propType" class="form-control" required>
+                <option value="Flat">Flat</option>
+                <option value="Room" selected>Room / PG</option>
+                <option value="Shop">Shop / Commercial</option>
+                <option value="House">House / Villa</option>
+                <option value="Office">Office</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="propAddress">Property Address *</label>
+            <input type="text" id="propAddress" class="form-control" placeholder="Street, Sector, City" required>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="propTotalUnits">Total Units / Rooms *</label>
+              <input type="number" id="propTotalUnits" class="form-control" value="6" min="1" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="propDefaultRent">Default Monthly Rent (₹) *</label>
+              <input type="number" id="propDefaultRent" class="form-control" value="12000" min="0" required>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="propElectricityRate">Electricity Tariff (₹/Unit)</label>
+              <input type="number" id="propElectricityRate" class="form-control" value="10" min="0" step="0.5">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="propWaterCharge">Water Maintenance (₹/Month)</label>
+              <input type="number" id="propWaterCharge" class="form-control" value="0" min="0">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="propParkingCharge">Parking Charge (₹/Month)</label>
+            <input type="number" id="propParkingCharge" class="form-control" value="0" min="0">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalAddProperty')">Cancel</button>
+          <button type="submit" id="addPropertyBtn" class="btn btn-primary btn-sm">Create Property</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. EDIT PROPERTY MODAL (PHASE 3C) -->
+  <div id="modalEditProperty" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+          Edit Property Details
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalEditProperty')">&times;</button>
+      </div>
+      <form id="formEditProperty" onsubmit="handleEditProperty(event)">
+        <input type="hidden" id="editPropId">
+        <div class="modal-body">
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="editPropName">Property Name *</label>
+              <input type="text" id="editPropName" class="form-control" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="editPropType">Property Type *</label>
+              <select id="editPropType" class="form-control" required>
+                <option value="Flat">Flat</option>
+                <option value="Room">Room / PG</option>
+                <option value="Shop">Shop / Commercial</option>
+                <option value="House">House / Villa</option>
+                <option value="Office">Office</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="editPropAddress">Address</label>
+            <input type="text" id="editPropAddress" class="form-control">
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="editPropDefaultRent">Default Rent (₹)</label>
+              <input type="number" id="editPropDefaultRent" class="form-control" min="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="editPropElectricityRate">Electricity Rate (₹/unit)</label>
+              <input type="number" id="editPropElectricityRate" class="form-control" min="0" step="0.5">
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="editPropWaterCharge">Water Maintenance (₹/mo)</label>
+              <input type="number" id="editPropWaterCharge" class="form-control" min="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="editPropParkingCharge">Parking Charge (₹/mo)</label>
+              <input type="number" id="editPropParkingCharge" class="form-control" min="0">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalEditProperty')">Cancel</button>
+          <button type="submit" id="editPropertyBtn" class="btn btn-primary btn-sm">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. ADD UNIT MODAL -->
+  <div id="modalAddUnit" class="modal-backdrop">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add New Room / Unit
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalAddUnit')">&times;</button>
+      </div>
+      <form id="formAddUnit" onsubmit="handleAddUnit(event)">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Target Property</label>
+            <div id="unitModalPropertyName" style="font-weight: 700; color: var(--primary);">Main Building</div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="newUnitNumber">Unit / Room Number *</label>
+              <input type="text" id="newUnitNumber" class="form-control" placeholder="e.g. 104, 2B, Shop 1" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="newUnitFloor">Floor *</label>
+              <input type="text" id="newUnitFloor" class="form-control" placeholder="e.g. 1st Floor, Ground Floor" required>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="newUnitRent">Default Monthly Rent (₹) *</label>
+              <input type="number" id="newUnitRent" class="form-control" placeholder="12000" min="0" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="newUnitMeter">Electricity Meter Number</label>
+              <input type="text" id="newUnitMeter" class="form-control" placeholder="e.g. MTR-9021">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalAddUnit')">Cancel</button>
+          <button type="submit" id="addUnitBtn" class="btn btn-primary btn-sm">Create Unit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. ADD TENANT MODAL (MATCHES ALL MOBILE APP FIELDS) -->
+  <div id="modalAddTenant" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+          Add Tenant & Assign Unit
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalAddTenant')">&times;</button>
+      </div>
+      <form id="formAddTenant" onsubmit="handleAddTenant(event)">
+        <div class="modal-body">
+
+          <!-- 1. Tenant Personal Details Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              1. Tenant Personal Details
+            </div>
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="newTenantName">Tenant Full Name *</label>
+                <input type="text" id="newTenantName" class="form-control" placeholder="e.g. Ramesh Kumar" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="newTenantMobile">Mobile Number</label>
+                <input type="tel" id="newTenantMobile" class="form-control" placeholder="e.g. +91 98765 43210">
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="newTenantGender">Gender</label>
+                <select id="newTenantGender" class="form-control">
+                  <option value="">Select Gender (Optional)</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="newTenantOccupation">Occupation</label>
+                <select id="newTenantOccupation" class="form-control" onchange="handleTenantOccupationChange('new', this.value)">
+                  <option value="">Select Occupation (Optional)</option>
+                  <option value="student">Student</option>
+                  <option value="employee">Employee</option>
+                  <option value="government_employee">Government Employee</option>
+                  <option value="private_job">Private Job</option>
+                  <option value="business">Business</option>
+                  <option value="self_employed">Self Employed</option>
+                  <option value="doctor">Doctor</option>
+                  <option value="engineer">Engineer</option>
+                  <option value="teacher">Teacher</option>
+                  <option value="shopkeeper">Shopkeeper</option>
+                  <option value="driver">Driver</option>
+                  <option value="farmer">Farmer</option>
+                  <option value="homemaker">Homemaker</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" id="newTenantOccupationOtherGroup" style="display: none;">
+              <label class="form-label" for="newTenantOccupationOther">Specify Occupation *</label>
+              <input type="text" id="newTenantOccupationOther" class="form-control" placeholder="e.g. Designer, Freelancer">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Total Members * <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;">(Including primary tenant)</span></label>
+              <div class="stepper-container">
+                <button type="button" class="stepper-btn" onclick="stepTenantMembers('new', -1)">−</button>
+                <div class="stepper-value-box" id="newTenantMembersDisplay">1</div>
+                <button type="button" class="stepper-btn" onclick="stepTenantMembers('new', 1)">+</button>
+                <input type="hidden" id="newTenantMembers" value="1">
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Identification Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>
+              2. Identification & KYC
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="newTenantIdProofType">ID Proof Type</label>
+              <select id="newTenantIdProofType" class="form-control" onchange="handleTenantIdProofChange('new', this.value)">
+                <option value="none">None</option>
+                <option value="aadhaar">Aadhaar Card</option>
+                <option value="pan">PAN Card</option>
+                <option value="voter_id">Voter ID</option>
+                <option value="passport">Passport</option>
+                <option value="driving_licence">Driving Licence</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group" id="newTenantIdProofDocGroup" style="display: none;">
+              <label class="form-label" for="newTenantIdProofDoc">ID Proof Number *</label>
+              <input type="text" id="newTenantIdProofDoc" class="form-control" placeholder="e.g. Aadhaar or PAN Card number">
+            </div>
+          </div>
+
+          <!-- 3. Property Details & Room Assignment Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+              3. Property & Room Allocation
+            </div>
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="newTenantProperty">Select Property *</label>
+                <select id="newTenantProperty" class="form-control" required onchange="handlePropertyChangeInTenantModal(this.value)">
+                  <!-- Populated dynamically -->
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="newTenantUnit">Select Unit / Flat *</label>
+                <select id="newTenantUnit" class="form-control" required onchange="handleUnitSelectInTenantForm(this.value)">
+                  <!-- Populated dynamically with vacant units -->
+                </select>
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="newTenantMoveIn">Move-in Date *</label>
+                <input type="date" id="newTenantMoveIn" class="form-control" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="newTenantRent">Agreed Monthly Rent (₹) *</label>
+                <input type="number" id="newTenantRent" class="form-control" placeholder="0" min="0" required>
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="newTenantDeposit">Security Deposit (₹) <span style="font-size: 0.8rem; color: var(--text-muted);">(Optional)</span></label>
+                <input type="number" id="newTenantDeposit" class="form-control" placeholder="0" min="0" value="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="newTenantAdvance">Advance Rent Paid (₹) <span style="font-size: 0.8rem; color: var(--text-muted);">(Optional)</span></label>
+                <input type="number" id="newTenantAdvance" class="form-control" placeholder="0" min="0" value="0">
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Electricity Bill Settings Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+              4. Electricity Bill Settings
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="newTenantElecType">Select Electricity Bill Type</label>
+              <select id="newTenantElecType" class="form-control" onchange="handleTenantElecTypeChange('new', this.value)">
+                <option value="perUnit">Charge Per Unit</option>
+                <option value="fixed">Fixed (Monthly)</option>
+                <option value="none">None (Self / Included in Rent)</option>
+              </select>
+            </div>
+
+            <div id="newTenantElecFixedGroup" style="display: none;">
+              <div class="form-group">
+                <label class="form-label" for="newTenantElecFixed">Monthly Electricity Charge (₹) *</label>
+                <input type="number" id="newTenantElecFixed" class="form-control" placeholder="e.g. 500" min="0" value="0">
+              </div>
+            </div>
+
+            <div id="newTenantElecPerUnitGroup">
+              <div class="input-row">
+                <div class="form-group">
+                  <label class="form-label" for="newTenantElecRate">Electricity Rate Per Unit (₹) *</label>
+                  <input type="number" id="newTenantElecRate" class="form-control" placeholder="e.g. 10" min="0" step="0.1" value="0">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="newTenantMeter">Initial Meter Reading *</label>
+                  <input type="number" id="newTenantMeter" class="form-control" placeholder="e.g. 0, 1250" min="0" value="0">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. Water Bill Settings Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+              5. Water Bill Settings
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="newTenantWaterType">Select Water Bill Type</label>
+              <select id="newTenantWaterType" class="form-control" onchange="handleTenantWaterTypeChange('new', this.value)">
+                <option value="none">None (Self / Included in Rent)</option>
+                <option value="fixed">Fixed (Monthly)</option>
+                <option value="perUnit">Charge Per Unit</option>
+              </select>
+            </div>
+
+            <div id="newTenantWaterFixedGroup" style="display: none;">
+              <div class="form-group">
+                <label class="form-label" for="newTenantWaterFixed">Monthly Water Charge (₹) *</label>
+                <input type="number" id="newTenantWaterFixed" class="form-control" placeholder="e.g. 200" min="0" value="0">
+              </div>
+            </div>
+
+            <div id="newTenantWaterPerUnitGroup" style="display: none;">
+              <div class="form-group">
+                <label class="form-label" for="newTenantWaterRate">Water Rate Per Unit (₹) *</label>
+                <input type="number" id="newTenantWaterRate" class="form-control" placeholder="e.g. 5" min="0" step="0.1" value="0">
+              </div>
+            </div>
+          </div>
+
+          <!-- 6. Tenant App Access Card -->
+          <div class="form-section-card">
+            <div class="form-section-header" style="justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+                6. Tenant App Access (Mobile Login)
+              </div>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.88rem; font-weight: 600;">
+                <input type="checkbox" id="newTenantCreateLogin" onchange="handleTenantAppAccessChange('new', this.checked)">
+                Enable Access
+              </label>
+            </div>
+            <div style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 8px;">
+              Enable login account for the Rentora Tenant App to view bills and submit payments.
+            </div>
+
+            <div id="newTenantLoginGroup" style="display: none;">
+              <div class="form-group">
+                <label class="form-label" for="newTenantTempPassword">Temporary Password * <span style="font-size: 0.8rem; color: var(--text-muted);">(Min. 6 characters)</span></label>
+                <div class="password-input-wrapper">
+                  <input type="password" id="newTenantTempPassword" class="form-control" placeholder="Min. 6 characters">
+                  <button type="button" class="password-toggle-btn" onclick="togglePasswordInputVisibility('newTenantTempPassword')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="info-banner-box">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                <span>The tenant logs in with their mobile number and this temporary password. Upon first login, they can change their password.</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalAddTenant')">Cancel</button>
+          <button type="submit" id="addTenantSubmitBtn" class="btn btn-emerald btn-sm">Confirm & Onboard Tenant</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- PROPERTY DETAILS MODAL (FULL OVERVIEW) -->
+  <div id="modalPropertyDetails" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+          Property Overview & Units Portfolio
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalPropertyDetails')">&times;</button>
+      </div>
+      <div class="modal-body" id="propertyDetailsModalBody">
+        <!-- Dynamically rendered -->
+      </div>
+      <div class="modal-footer" id="propertyDetailsModalFooter">
+        <button class="btn btn-secondary btn-sm" onclick="closeModal('modalPropertyDetails')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. TENANT DETAILS MODAL (FULL PROFILE) -->
+  <div id="modalTenantDetails" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+          Complete Tenant Profile Details
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalTenantDetails')">&times;</button>
+      </div>
+      <div class="modal-body" id="tenantDetailsModalBody">
+        <!-- Dynamically rendered -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="closeModal('modalTenantDetails')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CREATE BILL MODAL -->
+  <div id="modalCreateBill" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Generate New Monthly Bill & Invoice
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalCreateBill')">&times;</button>
+      </div>
+      <form id="formCreateBill" onsubmit="handleCreateBill(event)">
+        <div class="modal-body">
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="billPropertySelect">Property *</label>
+              <select id="billPropertySelect" class="form-control" required onchange="handleBillPropertyChange(this.value)">
+                <!-- Dynamically populated -->
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="billUnitSelect">Unit & Occupied Tenant *</label>
+              <select id="billUnitSelect" class="form-control" required onchange="handleBillUnitChange(this.value)">
+                <!-- Dynamically populated -->
+              </select>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="billMonth">Billing Month (YYYY-MM) *</label>
+              <input type="month" id="billMonth" class="form-control" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="billDueDate">Due Date *</label>
+              <input type="date" id="billDueDate" class="form-control" required>
+            </div>
+          </div>
+
+          <div style="background: var(--bg-surface-elevated); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+            <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 12px; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+              Submeter Electricity Calculation
+            </div>
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="billPrevReading">Previous Reading (Units) *</label>
+                <input type="number" id="billPrevReading" class="form-control" value="0" min="0" required oninput="calculateLiveBill()">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="billCurrReading">Current Reading (Units) *</label>
+                <input type="number" id="billCurrReading" class="form-control" value="0" min="0" required oninput="calculateLiveBill()">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="billElecRate">Rate (₹/unit) *</label>
+                <input type="number" id="billElecRate" class="form-control" value="10" min="0" required oninput="calculateLiveBill()">
+              </div>
+            </div>
+            <div style="font-size: 0.84rem; color: var(--primary); font-weight: 600; text-align: right;" id="billElecPreviewText">
+              Units Consumed: 0 • Electricity Total: ₹0.00
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="billRent">Monthly Rent (₹) *</label>
+              <input type="number" id="billRent" class="form-control" min="0" required oninput="calculateLiveBill()">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="billWater">Water Charge (₹)</label>
+              <input type="number" id="billWater" class="form-control" value="0" min="0" oninput="calculateLiveBill()">
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="billParking">Parking Charge (₹)</label>
+              <input type="number" id="billParking" class="form-control" value="0" min="0" oninput="calculateLiveBill()">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="billMaintenance">Maintenance / Other Charges (₹)</label>
+              <input type="number" id="billMaintenance" class="form-control" value="0" min="0" oninput="calculateLiveBill()">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="billPrevDue">Previous Unpaid Dues Carried Forward (₹)</label>
+            <input type="number" id="billPrevDue" class="form-control" value="0" min="0" oninput="calculateLiveBill()">
+          </div>
+
+          <!-- Total Calculation Card -->
+          <div style="background: var(--bg-surface-elevated); padding: 14px 18px; border-radius: var(--radius-sm); border-left: 4px solid var(--primary); display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-size: 0.78rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Subtotal (Current Charges)</div>
+              <div style="font-size: 1rem; font-weight: 600;" id="billLiveSubtotal">₹0.00</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 0.78rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Total Payable Amount</div>
+              <div style="font-size: 1.35rem; font-weight: 800; color: var(--primary);" id="billLiveTotal">₹0.00</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalCreateBill')">Cancel</button>
+          <button type="submit" id="createBillSubmitBtn" class="btn btn-emerald btn-sm">Generate & Save Bill</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- BILL DETAILS MODAL -->
+  <div id="modalBillDetails" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+          Invoice & Payment Statement
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalBillDetails')">&times;</button>
+      </div>
+      <div class="modal-body" id="billDetailsModalBody">
+        <!-- Dynamically rendered -->
+      </div>
+      <div class="modal-footer" id="billDetailsModalFooter">
+        <button class="btn btn-secondary btn-sm" onclick="closeModal('modalBillDetails')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RECORD PAYMENT MODAL -->
+  <div id="modalRecordPayment" class="modal-backdrop">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+          Record Tenant Payment
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalRecordPayment')">&times;</button>
+      </div>
+      <form id="formRecordPayment" onsubmit="handleRecordPayment(event)">
+        <input type="hidden" id="paymentBillId">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="paymentSelectBill">Select Bill / Invoice *</label>
+            <select id="paymentSelectBill" class="form-control" required onchange="handlePaymentBillSelect(this.value)">
+              <!-- Dynamically populated with pending bills -->
+            </select>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="paymentAmount">Amount Paid (₹) *</label>
+              <input type="number" id="paymentAmount" class="form-control" min="1" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="paymentDate">Payment Date *</label>
+              <input type="date" id="paymentDate" class="form-control" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="paymentMethod">Payment Method *</label>
+            <select id="paymentMethod" class="form-control" required>
+              <option value="upi" selected>UPI (GPay, PhonePe, Paytm)</option>
+              <option value="cash">Cash in Hand</option>
+              <option value="bank_transfer">Bank Transfer (IMPS / NEFT)</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="paymentTxnId">Transaction Reference / Note (Optional)</label>
+            <input type="text" id="paymentTxnId" class="form-control" placeholder="e.g. UPI Ref #4392819283">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalRecordPayment')">Cancel</button>
+          <button type="submit" id="recordPaymentSubmitBtn" class="btn btn-emerald btn-sm">Confirm Payment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 6. EDIT TENANT MODAL (MATCHES ALL MOBILE APP FIELDS) -->
+  <div id="modalEditTenant" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+          Edit Tenant Information
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalEditTenant')">&times;</button>
+      </div>
+      <form id="formEditTenant" onsubmit="handleEditTenant(event)">
+        <input type="hidden" id="editTenantId">
+        <div class="modal-body">
+
+          <!-- 1. Tenant Personal Details Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              1. Tenant Personal Details
+            </div>
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="editTenantName">Full Name *</label>
+                <input type="text" id="editTenantName" class="form-control" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="editTenantMobile">Mobile Number</label>
+                <input type="tel" id="editTenantMobile" class="form-control">
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="editTenantGender">Gender</label>
+                <select id="editTenantGender" class="form-control">
+                  <option value="">Select Gender (Optional)</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="editTenantOccupation">Occupation</label>
+                <select id="editTenantOccupation" class="form-control" onchange="handleTenantOccupationChange('edit', this.value)">
+                  <option value="">Select Occupation (Optional)</option>
+                  <option value="student">Student</option>
+                  <option value="employee">Employee</option>
+                  <option value="government_employee">Government Employee</option>
+                  <option value="private_job">Private Job</option>
+                  <option value="business">Business</option>
+                  <option value="self_employed">Self Employed</option>
+                  <option value="doctor">Doctor</option>
+                  <option value="engineer">Engineer</option>
+                  <option value="teacher">Teacher</option>
+                  <option value="shopkeeper">Shopkeeper</option>
+                  <option value="driver">Driver</option>
+                  <option value="farmer">Farmer</option>
+                  <option value="homemaker">Homemaker</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" id="editTenantOccupationOtherGroup" style="display: none;">
+              <label class="form-label" for="editTenantOccupationOther">Specify Occupation *</label>
+              <input type="text" id="editTenantOccupationOther" class="form-control" placeholder="e.g. Designer, Freelancer">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Total Members * <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: normal;">(Including primary tenant)</span></label>
+              <div class="stepper-container">
+                <button type="button" class="stepper-btn" onclick="stepTenantMembers('edit', -1)">−</button>
+                <div class="stepper-value-box" id="editTenantMembersDisplay">1</div>
+                <button type="button" class="stepper-btn" onclick="stepTenantMembers('edit', 1)">+</button>
+                <input type="hidden" id="editTenantMembers" value="1">
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Identification Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>
+              2. Identification & KYC
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="editTenantIdProofType">ID Proof Type</label>
+              <select id="editTenantIdProofType" class="form-control" onchange="handleTenantIdProofChange('edit', this.value)">
+                <option value="none">None</option>
+                <option value="aadhaar">Aadhaar Card</option>
+                <option value="pan">PAN Card</option>
+                <option value="voter_id">Voter ID</option>
+                <option value="passport">Passport</option>
+                <option value="driving_licence">Driving Licence</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group" id="editTenantIdProofDocGroup" style="display: none;">
+              <label class="form-label" for="editTenantIdProofDoc">ID Proof Number *</label>
+              <input type="text" id="editTenantIdProofDoc" class="form-control" placeholder="e.g. Aadhaar or PAN Card number">
+            </div>
+          </div>
+
+          <!-- 3. Property & Unit Assignment -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+              3. Property & Room Allocation
+            </div>
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="editTenantProperty">Property</label>
+                <select id="editTenantProperty" class="form-control" onchange="handlePropertyChangeInEditTenantModal(this.value)">
+                  <!-- Populated dynamically -->
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="editTenantUnit">Assigned Unit</label>
+                <select id="editTenantUnit" class="form-control">
+                  <!-- Populated dynamically -->
+                </select>
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="editTenantMoveIn">Move-in Date</label>
+                <input type="date" id="editTenantMoveIn" class="form-control">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="editTenantRent">Monthly Rent (₹) *</label>
+                <input type="number" id="editTenantRent" class="form-control" min="0" required>
+              </div>
+            </div>
+
+            <div class="input-row">
+              <div class="form-group">
+                <label class="form-label" for="editTenantDeposit">Security Deposit (₹)</label>
+                <input type="number" id="editTenantDeposit" class="form-control" min="0">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="editTenantAdvance">Advance Rent (₹)</label>
+                <input type="number" id="editTenantAdvance" class="form-control" min="0">
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Electricity Bill Settings Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+              4. Electricity Bill Settings
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="editTenantElecType">Select Electricity Bill Type</label>
+              <select id="editTenantElecType" class="form-control" onchange="handleTenantElecTypeChange('edit', this.value)">
+                <option value="perUnit">Charge Per Unit</option>
+                <option value="fixed">Fixed (Monthly)</option>
+                <option value="none">None (Self / Included in Rent)</option>
+              </select>
+            </div>
+
+            <div id="editTenantElecFixedGroup" style="display: none;">
+              <div class="form-group">
+                <label class="form-label" for="editTenantElecFixed">Monthly Electricity Charge (₹) *</label>
+                <input type="number" id="editTenantElecFixed" class="form-control" min="0">
+              </div>
+            </div>
+
+            <div id="editTenantElecPerUnitGroup">
+              <div class="input-row">
+                <div class="form-group">
+                  <label class="form-label" for="editTenantElecRate">Electricity Rate Per Unit (₹) *</label>
+                  <input type="number" id="editTenantElecRate" class="form-control" min="0" step="0.1">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="editTenantMeter">Initial Meter Reading</label>
+                  <input type="number" id="editTenantMeter" class="form-control" min="0">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. Water Bill Settings Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+              5. Water Bill Settings
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="editTenantWaterType">Select Water Bill Type</label>
+              <select id="editTenantWaterType" class="form-control" onchange="handleTenantWaterTypeChange('edit', this.value)">
+                <option value="none">None (Self / Included in Rent)</option>
+                <option value="fixed">Fixed (Monthly)</option>
+                <option value="perUnit">Charge Per Unit</option>
+              </select>
+            </div>
+
+            <div id="editTenantWaterFixedGroup" style="display: none;">
+              <div class="form-group">
+                <label class="form-label" for="editTenantWaterFixed">Monthly Water Charge (₹) *</label>
+                <input type="number" id="editTenantWaterFixed" class="form-control" min="0">
+              </div>
+            </div>
+
+            <div id="editTenantWaterPerUnitGroup" style="display: none;">
+              <div class="form-group">
+                <label class="form-label" for="editTenantWaterRate">Water Rate Per Unit (₹) *</label>
+                <input type="number" id="editTenantWaterRate" class="form-control" min="0" step="0.1">
+              </div>
+            </div>
+          </div>
+
+          <!-- 6. Tenant App Access Status Card -->
+          <div class="form-section-card">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+              6. Tenant App Credentials & Status
+            </div>
+            <div id="editTenantAppAccessSummary" style="font-size: 0.88rem; color: var(--text-secondary);">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalEditTenant')">Cancel</button>
+          <button type="submit" id="editTenantBtn" class="btn btn-primary btn-sm">Update Tenant</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 7. DELETE / ARCHIVE TENANT MODAL (PHASE 4D) -->
+  <div id="modalDeleteTenant" class="modal-backdrop">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title" style="color: var(--danger);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          Confirm Tenant Removal
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalDeleteTenant')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.92rem; color: var(--text-main);">
+          Are you sure you want to remove <strong id="deleteTenantName">Tenant</strong>?
+        </p>
+        <div style="background: var(--bg-surface-elevated); padding: 14px; border-radius: var(--radius-sm); border-left: 3px solid var(--warning); font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5;">
+          <strong>Data Protection Notice:</strong>
+          <br>• The assigned room/unit will automatically be reset to <strong>Vacant</strong> so a new tenant can be onboarded.
+          <br>• All historical bills, payments, and financial ledgers remain <strong>safely preserved</strong> for reporting and tax accounting.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalDeleteTenant')">Cancel</button>
+        <button type="button" id="confirmDeleteTenantBtn" class="btn btn-primary btn-sm" style="background: var(--danger); border-color: var(--danger);" onclick="confirmDeleteTenant()">Delete Tenant</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. VACATE & MOVE-OUT SETTLEMENT MODAL (SEM TU SEM MOBILE APP) -->
+  <div id="modalVacateTenant" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title" style="color: var(--danger);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 22H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h5"></path><polyline points="17 16 21 12 17 8"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          Vacate Tenant & Finalize Move-Out Settlement
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalVacateTenant')">&times;</button>
+      </div>
+      <form id="formVacateTenant" onsubmit="handleVacateSubmit(event)">
+        <input type="hidden" id="vacateTenantId">
+        <input type="hidden" id="vacateUnitId">
+
+        <div class="modal-body">
+          <div style="background: var(--bg-surface-elevated); padding: 14px 18px; border-radius: var(--radius-sm); border-left: 4px solid var(--warning); display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-weight: 700; font-size: 1.05rem;" id="vacateTenantName">Tenant Name</div>
+              <div style="font-size: 0.84rem; color: var(--text-secondary);" id="vacateTenantUnitInfo">Unit 101 • Monthly Rent: ₹14,000</div>
+            </div>
+            <div class="unit-badge badge-occupied" id="vacateTenantStatus">Active</div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="vacatePeriodEnd">Normal Billing Period End Date *</label>
+              <input type="date" id="vacatePeriodEnd" class="form-control" required onchange="calculateModalSettlement()">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="vacateMoveOutDate">Actual Move-Out Date *</label>
+              <input type="date" id="vacateMoveOutDate" class="form-control" required onchange="calculateModalSettlement()">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Calculation Policy</label>
+            <div class="radio-toggle-group">
+              <label class="radio-toggle-label active">
+                <input type="radio" name="modalPolicy" value="fixed30" checked onchange="calculateModalSettlement()"> Fixed 30 Days (Standard)
+              </label>
+              <label class="radio-toggle-label">
+                <input type="radio" name="modalPolicy" value="actual" onchange="calculateModalSettlement()"> Actual Month Days
+              </label>
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="vacatePrevMeter">Previous Meter Reading (Units)</label>
+              <input type="number" id="vacatePrevMeter" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="vacateFinalMeter">Final Meter Reading (Units) *</label>
+              <input type="number" id="vacateFinalMeter" class="form-control" value="0" min="0" required oninput="calculateModalSettlement()">
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="vacateElecRate">Electricity Rate (₹/unit)</label>
+              <input type="number" id="vacateElecRate" class="form-control" value="10" min="1" oninput="calculateModalSettlement()">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="vacateAdvanceAdj">Advance Adjusted (₹)</label>
+              <input type="number" id="vacateAdvanceAdj" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="vacateDepositAdj">Security Deposit to Refund/Deduct (₹)</label>
+            <input type="number" id="vacateDepositAdj" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+          </div>
+
+          <!-- Live Breakdown Card in Modal -->
+          <div style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 16px;">
+            <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 10px; color: var(--text-main);">Live Settlement Summary</div>
+            <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.88rem;">
+              <div style="display: flex; justify-content: space-between;">
+                <span>Extra Stay Days & Rate:</span>
+                <span id="modalExtraDaysText">0 days (₹0.00/day)</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-weight: 600;">
+                <span>Extra Stay Rent:</span>
+                <span id="modalExtraRentText">₹0.00</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span>Electricity Charge:</span>
+                <span id="modalElecChargeText">₹0.00</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; color: var(--secondary);">
+                <span>Less Deductions (Deposit + Advance):</span>
+                <span id="modalDeductionsText">-₹0.00</span>
+              </div>
+              <div style="height: 1px; background: var(--border-subtle); margin: 4px 0;"></div>
+              <div style="display: flex; justify-content: space-between; font-weight: 800; font-size: 1.05rem;">
+                <span id="modalNetBalanceLabel">NET BALANCE:</span>
+                <span id="modalNetBalanceAmount" style="color: var(--secondary);">₹0.00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalVacateTenant')">Cancel</button>
+          <button type="submit" id="vacateSubmitBtn" class="btn btn-emerald btn-sm">Finalize Settlement & Vacate Unit</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 9. SETTLEMENT INVOICE POPUP / PRINT MODAL -->
+  <div id="modalSettlementInvoice" class="modal-backdrop">
+    <div class="modal-container large">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+          Move-Out Settlement Invoice
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalSettlementInvoice')">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding: 16px;">
+        <div class="invoice-paper" id="printableInvoiceArea">
+          <div class="invoice-header-row">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <div class="brand-icon-box" style="width: 28px; height: 28px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1V9.5z"/></svg>
+                </div>
+                <strong style="font-size: 1.25rem;">Rentora Platform</strong>
+              </div>
+              <div style="font-size: 0.82rem; color: var(--text-secondary);">Property: <strong id="invPropertyName">Property</strong></div>
+              <div style="font-size: 0.82rem; color: var(--text-secondary);">Owner / Landlord Portal</div>
+            </div>
+
+            <div style="text-align: right;">
+              <div style="font-size: 0.78rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 700;">Settlement ID</div>
+              <div style="font-family: monospace; font-size: 1.15rem; font-weight: 800; color: var(--primary);" id="invSettlementNum">SET-2026-0001</div>
+              <div style="font-size: 0.8rem; color: var(--text-secondary);" id="invDate">Date: 23-Oct-2026</div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; font-size: 0.88rem;">
+            <div>
+              <div style="color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase; font-weight: 600;">Tenant Details</div>
+              <div style="font-weight: 700;" id="invTenantName">Tenant Name</div>
+              <div id="invTenantMobile">+91 00000 00000</div>
+              <div id="invUnitName">Unit</div>
+            </div>
+            <div>
+              <div style="color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase; font-weight: 600;">Tenancy Dates</div>
+              <div>Billing Period End: <strong id="invPeriodEnd">2026-10-18</strong></div>
+              <div>Actual Move-Out: <strong id="invMoveOut">2026-10-23</strong></div>
+              <div>Policy Applied: <strong id="invPolicy">Fixed 30 Days</strong></div>
+            </div>
+          </div>
+
+          <table class="invoice-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Quantity / Metric</th>
+                <th>Rate (₹)</th>
+                <th style="text-align: right;">Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Extra Stay Rent</td>
+                <td id="invExtraDaysMetric">0 Days</td>
+                <td id="invDailyRateMetric">₹0.00/day</td>
+                <td style="text-align: right; font-weight: 600;" id="invExtraRentVal">₹0.00</td>
+              </tr>
+              <tr>
+                <td>Electricity Units Consumed</td>
+                <td id="invElecUnitsMetric">0 Units</td>
+                <td id="invElecRateMetric">₹10.00/unit</td>
+                <td style="text-align: right; font-weight: 600;" id="invElecChargeVal">₹0.00</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="font-weight: 700; text-align: right;">Total Charges (A)</td>
+                <td style="text-align: right; font-weight: 700; color: var(--primary);" id="invTotalChargesVal">₹0.00</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="color: var(--secondary);">Less: Advance Rent Adjusted</td>
+                <td style="text-align: right; color: var(--secondary);" id="invAdvanceVal">-₹0.00</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="color: var(--secondary);">Less: Security Deposit Refunded</td>
+                <td style="text-align: right; color: var(--secondary);" id="invDepositVal">-₹0.00</td>
+              </tr>
+              <tr style="border-top: 2px solid var(--border-subtle); background: var(--bg-surface-elevated);">
+                <td colspan="3" style="font-weight: 800; font-size: 1.05rem;" id="invFinalLabel">FINAL NET REFUNDABLE TO TENANT:</td>
+                <td style="text-align: right; font-weight: 800; font-size: 1.15rem; color: #10B981;" id="invNetTotalVal">₹0.00</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="font-size: 0.78rem; color: var(--text-muted); text-align: center; margin-top: 24px;">
+            Generated via Rentora Cloud Platform • Legally compliant Move-Out Settlement Receipt.
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="printInvoice()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+          Print / Save PDF
+        </button>
+        <button class="btn btn-emerald btn-sm" onclick="shareInvoiceWhatsApp()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+          Share on WhatsApp
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="closeModal('modalSettlementInvoice')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Application Script -->
+  <script src="./assets/js/app.js"></script>
+</body>
+</html>

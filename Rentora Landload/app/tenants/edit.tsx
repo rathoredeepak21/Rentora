@@ -147,6 +147,7 @@ export default function EditTenantScreen() {
   const [documentNumber, setDocumentNumber] = useState('');
   const [moveInDate, setMoveInDate] = useState('');
   const [monthlyRent, setMonthlyRent] = useState('0');
+  const [securityDeposit, setSecurityDeposit] = useState('0');
   const [initialMeterReading, setInitialMeterReading] = useState('0');
 
   // Electricity Billing Type
@@ -191,6 +192,7 @@ export default function EditTenantScreen() {
       setDocumentNumber(tenantObj.documentNumber || '');
       setMoveInDate(tenantObj.moveInDate);
       setMonthlyRent(String(tenantObj.monthlyRent || 0));
+      setSecurityDeposit(String(tenantObj.securityDeposit || 0));
       setInitialMeterReading(String(tenantObj.initialMeterReading || 0));
       setLoginStatus(tenantObj.loginStatus || (tenantObj.tenantAuthUid ? 'active' : 'not_created'));
 
@@ -357,6 +359,7 @@ export default function EditTenantScreen() {
         unitId: selectedUnitId,
         moveInDate,
         monthlyRent: parseFloat(monthlyRent) || 0,
+        securityDeposit: parseFloat(securityDeposit) || 0,
         electricityBillType,
         waterBillType,
       };
@@ -681,6 +684,15 @@ export default function EditTenantScreen() {
             prefix="₹"
             keyboardType="numeric"
             error={errors.monthlyRent}
+          />
+
+          <AppInput
+            label="Security Deposit"
+            value={securityDeposit}
+            onChangeText={setSecurityDeposit}
+            placeholder="0"
+            prefix="₹"
+            keyboardType="numeric"
           />
         </View>
 

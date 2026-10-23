@@ -13,7 +13,7 @@ import AppInput from '../../components/ui/AppInput';
 import LoadingView from '../../components/ui/LoadingView';
 import EmptyState from '../../components/ui/EmptyState';
 import { Bill } from '../../types';
-import { billService } from '../../services/billService';
+import { billService, isBillClosedOrPaid } from '../../services/billService';
 import { paymentService } from '../../services/paymentService';
 
 import SwipeableTabWrapper from '../../components/ui/SwipeableTabWrapper';
@@ -76,11 +76,12 @@ export default function BillsScreen() {
 
   // Filter bills list locally for tab selection
   const filteredBills = bills.filter((b) => {
+    const isPaid = isBillClosedOrPaid(b);
     if (activeTab === 'pending') {
-      return b.remainingAmount > 0 || b.paymentStatus === 'unpaid' || b.paymentStatus === 'partial';
+      return !isPaid;
     }
     if (activeTab === 'paid') {
-      return b.paymentStatus === 'paid' && (b.remainingAmount === 0 || b.remainingAmount === undefined);
+      return isPaid;
     }
     return true; // All
   });
@@ -109,6 +110,8 @@ export default function BillsScreen() {
   }, [refreshBills]);
 
   const handleMenuPress = useCallback((bill: Bill) => {
+    const isPaid = isBillClosedOrPaid(bill);
+
     Alert.alert(
       `Invoice ${bill.billNumber}`,
       "Choose an action for this invoice:",
@@ -121,7 +124,7 @@ export default function BillsScreen() {
           text: "Edit Bill",
           onPress: () => router.push({ pathname: '/bills/edit', params: { billId: bill.id } })
         },
-        bill.paymentStatus !== 'paid' ? {
+        !isPaid ? {
           text: "Record Payment",
           onPress: () => router.push({ pathname: '/bills/payment', params: { billId: bill.id } })
         } : null,

@@ -16,10 +16,14 @@ export const settingsService = {
         address: '',
         upiId: '',
         paymentInstructions: 'Please pay by the due date to avoid late fees. Kindly send a payment screenshot for verification.',
+        extraStayPolicy: 'fixed30',
         updatedAt: new Date().toISOString(),
       };
     }
-    return settings;
+    return {
+      ...settings,
+      extraStayPolicy: settings.extraStayPolicy || 'fixed30',
+    };
   },
 
   async saveSettings(ownerId: string, settings: Omit<BillSettings, 'id' | 'updatedAt'>): Promise<BillSettings> {

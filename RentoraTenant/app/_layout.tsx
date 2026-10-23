@@ -41,18 +41,27 @@ function RootNavigationGuard() {
   useEffect(() => {
     if (!isAuthenticated || isLoading) return;
 
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    // Listen for foreground notifications
+    const receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
+      console.log('[FCM] Device message received in foreground:', notification.request.content.title);
+      console.log('[FCM] Local notification displayed');
+    });
+
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      console.log('[FCM] Notification response/tap received');
       notificationService.handleNotificationTap(response, router);
     });
 
     Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response) {
+        console.log('[FCM] Notification tapped to launch terminated app');
         notificationService.handleNotificationTap(response, router);
       }
     });
 
     return () => {
-      subscription.remove();
+      receivedSubscription.remove();
+      responseSubscription.remove();
     };
   }, [isAuthenticated, isLoading]);
 

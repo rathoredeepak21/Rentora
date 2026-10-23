@@ -60,7 +60,7 @@ export const db = {
       let q = colRef as any;
       
       const user = auth.currentUser;
-      const ownerFilteredCollections = ['properties', 'units', 'tenants', 'bills', 'payments'];
+      const ownerFilteredCollections = ['properties', 'units', 'tenants', 'bills', 'payments', 'settlements'];
       if (user && ownerFilteredCollections.includes(colName)) {
         q = query(colRef, where('ownerId', '==', user.uid));
       }

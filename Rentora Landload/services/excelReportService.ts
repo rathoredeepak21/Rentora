@@ -3,7 +3,7 @@ import { Property, Unit, Tenant, Bill, Payment } from '../types';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
-import { decorateBills } from './billService';
+import { decorateBills, calculateOverallPending } from './billService';
 
 export const excelReportService = {
   async generateReport(ownerId: string, propertyId: string, monthStr: string, monthLabel: string): Promise<string> {
@@ -112,7 +112,7 @@ export const excelReportService = {
     const rentOutstanding = filteredBills.reduce((sum, b) => sum + (b.remainingAmount * ((b.rent || 0) / (b.totalAmount || 1))), 0);
 
     const totalCollected = filteredPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
-    const totalOutstanding = filteredBills.reduce((sum, b) => sum + (b.remainingAmount || 0), 0);
+    const totalOutstanding = calculateOverallPending(filteredBills);
 
     const newTenantsCount = filteredTenants.filter(t => t.moveInDate && t.moveInDate.startsWith(monthStr)).length;
     const vacatedTenantsCount = filteredTenants.filter(t => t.status === 'vacated' && t.moveOutDate && t.moveOutDate.startsWith(monthStr)).length;

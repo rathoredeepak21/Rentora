@@ -10,9 +10,10 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import MoneyText from '../../components/ui/MoneyText';
 import AppButton from '../../components/ui/AppButton';
 import db from '../../utils/db';
-import { Bill, Payment, Unit } from '../../types';
+import { Bill, Payment, Unit, Tenant } from '../../types';
 import { decorateBills } from '../../services/billService';
 import { tenantAuthService } from '../../services/tenantAuthService';
+import { tenantService } from '../../services/tenantService';
 
 export default function TenantDetailsScreen() {
   const { colors, themeMode } = useTheme();
@@ -22,7 +23,16 @@ export default function TenantDetailsScreen() {
   const { tenants, loading: tenantLoading, deleteTenant } = useTenants();
   const { properties } = useProperties();
 
-  const tenant = tenants.find((t) => t.id === id);
+  const [directTenant, setDirectTenant] = useState<Tenant | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    tenantService.getTenantById(id).then((t: Tenant | null) => {
+      if (t) setDirectTenant(t);
+    }).catch((e: any) => console.error('Error fetching tenant directly:', e));
+  }, [id]);
+
+  const tenant = tenants.find((t) => t.id === id) || directTenant;
   const property = tenant ? properties.find((p) => p.id === tenant.propertyId) : null;
 
   const [unitNumber, setUnitNumber] = useState('');
@@ -119,17 +129,19 @@ export default function TenantDetailsScreen() {
     if (!id) return;
     setLoadingHistory(true);
     try {
-      const allBills = await db.getDocs<Bill>('bills');
+      const [allBills, allPayments] = await Promise.all([
+        db.getDocs<Bill>('bills'),
+        db.getDocs<Payment>('payments'),
+      ]);
       const rawTenantBills = allBills.filter((b) => b.tenantId === id);
       const tenantBills = decorateBills(rawTenantBills);
-      // Sort bills by month desc
-      tenantBills.sort((a, b) => b.billingMonth.localeCompare(a.billingMonth));
+      const tenantPayments = allPayments.filter((p) => p.tenantId === id);
+      // Sort bills by month desc safely
+      tenantBills.sort((a, b) => ((b && b.billingMonth) || '').localeCompare((a && a.billingMonth) || ''));
       setBills(tenantBills);
 
-      const allPayments = await db.getDocs<Payment>('payments');
-      const tenantPayments = allPayments.filter((p) => p.tenantId === id);
-      // Sort payments by date desc
-      tenantPayments.sort((a, b) => b.paymentDate.localeCompare(a.paymentDate));
+      // Sort payments by date desc safely
+      tenantPayments.sort((a, b) => ((b && b.paymentDate) || '').localeCompare((a && a.paymentDate) || ''));
       setPayments(tenantPayments);
     } catch (e) {
       console.error('Error fetching tenant history', e);
@@ -209,15 +221,15 @@ export default function TenantDetailsScreen() {
       <View style={styles.headerProfile}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>
-            {tenant.name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase()}
+            {((tenant.name || 'Tenant').trim().split(/\s+/).filter(Boolean).map((n: string) => n[0]).join('').substring(0, 2) || 'T').toUpperCase()}
           </Text>
         </View>
         <View style={styles.profileInfo}>
-          <Text style={styles.profileName}>{tenant.name}</Text>
+          <Text style={styles.profileName}>{tenant.name || 'Tenant'}</Text>
           <View style={styles.profileSub}>
-            <StatusBadge status={tenant.status} type="tenant" />
+            <StatusBadge status={tenant.status || 'vacated'} type="tenant" />
             <Text style={styles.profileSubText}>
-              Rent: <Text style={styles.boldRent}>₹{tenant.monthlyRent}</Text>/mo
+              Rent: <Text style={styles.boldRent}>₹{tenant.monthlyRent || 0}</Text>/mo
             </Text>
           </View>
         </View>
@@ -287,6 +299,15 @@ export default function TenantDetailsScreen() {
                   />
                 </>
               )}
+              {tenant.status === 'vacated' && (
+                <AppButton
+                  title="View Settlement"
+                  onPress={() => router.push({ pathname: '/tenants/settlement', params: { tenantId: tenant.id } })}
+                  icon="document-text-outline"
+                  size="sm"
+                  style={styles.actionBtn}
+                />
+              )}
               <AppButton
                 title="Edit Profile"
                 onPress={() => router.push({ pathname: '/tenants/edit', params: { id: tenant.id } })}
@@ -355,7 +376,7 @@ export default function TenantDetailsScreen() {
                 <View style={styles.infoTextWrapper}>
                   <Text style={styles.infoLabel}>Gender</Text>
                   <Text style={styles.infoValue}>
-                    {tenant.gender ? tenant.gender.charAt(0).toUpperCase() + tenant.gender.slice(1).replace(/_/g, ' ') : 'Not provided'}
+                    {tenant.gender && typeof tenant.gender === 'string' ? tenant.gender.charAt(0).toUpperCase() + tenant.gender.slice(1).replace(/_/g, ' ') : 'Not provided'}
                   </Text>
                 </View>
               </View>
@@ -365,7 +386,7 @@ export default function TenantDetailsScreen() {
                 <View style={styles.infoTextWrapper}>
                   <Text style={styles.infoLabel}>Occupation</Text>
                   <Text style={styles.infoValue}>
-                    {tenant.occupation ? tenant.occupation.charAt(0).toUpperCase() + tenant.occupation.slice(1).replace(/_/g, ' ') : 'Not provided'}
+                    {tenant.occupation && typeof tenant.occupation === 'string' ? tenant.occupation.charAt(0).toUpperCase() + tenant.occupation.slice(1).replace(/_/g, ' ') : 'Not provided'}
                   </Text>
                 </View>
               </View>
@@ -383,7 +404,7 @@ export default function TenantDetailsScreen() {
                 <View style={styles.infoTextWrapper}>
                   <Text style={styles.infoLabel}>ID Proof Type</Text>
                   <Text style={styles.infoValue}>
-                    {!tenant.idProofType || tenant.idProofType === 'none' ? 'None' : tenant.idProofType.charAt(0).toUpperCase() + tenant.idProofType.slice(1).replace(/_/g, ' ')}
+                    {!tenant.idProofType || tenant.idProofType === 'none' ? 'None' : typeof tenant.idProofType === 'string' ? tenant.idProofType.charAt(0).toUpperCase() + tenant.idProofType.slice(1).replace(/_/g, ' ') : 'None'}
                   </Text>
                 </View>
               </View>
@@ -427,6 +448,22 @@ export default function TenantDetailsScreen() {
                 <View style={styles.infoTextWrapper}>
                   <Text style={styles.infoLabel}>Monthly Rent</Text>
                   <Text style={styles.infoValue}>₹{tenant.monthlyRent}</Text>
+                </View>
+              </View>
+
+              <View style={styles.infoItem}>
+                <Ionicons name="cash-outline" size={18} color={colors.textSecondary} />
+                <View style={styles.infoTextWrapper}>
+                  <Text style={styles.infoLabel}>Advance Rent Balance</Text>
+                  <Text style={styles.infoValue}>₹{tenant.advanceAmount || 0}</Text>
+                </View>
+              </View>
+
+              <View style={styles.infoItem}>
+                <Ionicons name="shield-checkmark-outline" size={18} color={colors.textSecondary} />
+                <View style={styles.infoTextWrapper}>
+                  <Text style={styles.infoLabel}>Security Deposit Balance</Text>
+                  <Text style={styles.infoValue}>₹{tenant.securityDeposit || 0}</Text>
                 </View>
               </View>
 
@@ -557,7 +594,17 @@ export default function TenantDetailsScreen() {
                   </View>
                   <View style={styles.historyFooter}>
                     <Text style={styles.historySub}>No: {bill.billNumber}</Text>
-                    <MoneyText amount={bill.totalAmount} style={styles.historyAmount} />
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <MoneyText
+                        amount={bill.paymentStatus === 'paid' ? 0 : (bill.remainingAmount !== undefined ? bill.remainingAmount : bill.totalAmount)}
+                        style={styles.historyAmount}
+                      />
+                      {(bill.paymentStatus === 'paid' || bill.paymentStatus === 'partial') && (
+                        <Text style={{ fontSize: 10, color: colors.textSecondary }}>
+                          Orig: ₹{bill.totalAmount}
+                        </Text>
+                      )}
+                    </View>
                   </View>
                 </TouchableOpacity>
               ))
@@ -579,7 +626,7 @@ export default function TenantDetailsScreen() {
                 <View key={payment.id} style={styles.historyCard}>
                   <View style={styles.historyHeader}>
                     <Text style={styles.historyTitle}>{payment.paymentDate}</Text>
-                    <Text style={styles.methodBadge}>{payment.paymentMethod.toUpperCase()}</Text>
+                    <Text style={styles.methodBadge}>{(payment.paymentMethod || 'Payment').toUpperCase()}</Text>
                   </View>
                   <View style={styles.historyFooter}>
                     <Text style={styles.historySub}>Txn ID: {payment.transactionId || 'N/A'}</Text>

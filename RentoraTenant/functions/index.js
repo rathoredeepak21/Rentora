@@ -120,6 +120,7 @@ async function sendPushNotification(tokens, payload) {
   // 1. Send native FCM multicast message
   if (fcmTokens.length > 0) {
     try {
+      console.log(`[FCM] Send started to ${fcmTokens.length} native device tokens.`);
       const message = {
         tokens: fcmTokens,
         notification: {
@@ -130,7 +131,7 @@ async function sendPushNotification(tokens, payload) {
         android: {
           priority: 'high',
           notification: {
-            channelId: 'default',
+            channelId: 'rentora_notifications',
             sound: 'default',
             defaultSound: true,
             defaultVibrateTimings: true,
@@ -139,7 +140,7 @@ async function sendPushNotification(tokens, payload) {
       };
 
       const response = await admin.messaging().sendEachForMulticast(message);
-      console.log(`[FCM] Sent: ${response.successCount} success, ${response.failureCount} failed.`);
+      console.log(`[FCM] Send result: ${response.successCount} success, ${response.failureCount} failed.`);
 
       // Collect invalid tokens to prune
       if (response.failureCount > 0 && payload.recipientUserRef) {
@@ -147,6 +148,7 @@ async function sendPushNotification(tokens, payload) {
         response.responses.forEach((resp, idx) => {
           if (!resp.success) {
             const errorCode = resp.error ? resp.error.code : '';
+            console.warn(`[FCM] Token delivery failure: ${errorCode}`);
             if (
               errorCode === 'messaging/invalid-registration-token' ||
               errorCode === 'messaging/registration-token-not-registered'
@@ -156,6 +158,7 @@ async function sendPushNotification(tokens, payload) {
           }
         });
         if (invalidTokens.length > 0) {
+          console.log(`[FCM] Pruning ${invalidTokens.length} stale/unregistered tokens.`);
           await cleanupInvalidTokens(payload.recipientUserRef, invalidTokens);
         }
       }

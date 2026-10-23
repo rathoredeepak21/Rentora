@@ -40,13 +40,25 @@ let currentRegisteredUid: string | null = null;
 
 export const notificationService = {
   /**
-   * Sets up default Android notification channel with high priority
+   * Sets up default and rentora_notifications Android notification channels with high priority
    */
   async setupNotificationChannel(): Promise<void> {
     if (Platform.OS === 'android') {
       try {
+        await Notifications.setNotificationChannelAsync('rentora_notifications', {
+          name: 'Rentora Notifications',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#2563EB',
+          sound: 'default',
+          enableVibrate: true,
+          showBadge: true,
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        });
+
+        // Also configure 'default' channel as fallback
         await Notifications.setNotificationChannelAsync('default', {
-          name: 'Rentora Landlord Notifications',
+          name: 'Default Notifications',
           importance: Notifications.AndroidImportance.MAX,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#2563EB',
@@ -56,7 +68,7 @@ export const notificationService = {
           lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         });
       } catch (err) {
-        console.warn('Error setting up notification channel in Landlord app:', err);
+        console.warn('[FCM] Error setting up notification channel in Landlord app:', err);
       }
     }
   },
@@ -82,8 +94,13 @@ export const notificationService = {
         finalStatus = status;
       }
 
-      if (finalStatus !== 'granted') {
-        console.log('[LandlordNotificationService] Push notification permission not granted or denied.');
+      const isGranted = finalStatus === 'granted';
+      console.log(`[FCM] Notification permission: ${isGranted ? 'GRANTED' : 'DENIED'}`);
+      console.log(`[FCM] USER ID: ${uid}`);
+      console.log('[FCM] USER TYPE: LANDLORD');
+
+      if (!isGranted) {
+        console.warn('[FCM] Notification permission was denied by the user. Android status bar notifications cannot appear.');
         return null;
       }
 
@@ -98,30 +115,36 @@ export const notificationService = {
             : JSON.stringify(devicePushToken.data);
           if (rawToken && rawToken.trim()) {
             tokensToAdd.push(rawToken.trim());
-            console.log('[LandlordNotificationService] Acquired native device FCM token');
           }
         }
       } catch (deviceTokenErr) {
-        console.log('[LandlordNotificationService] Native token acquisition fallback:', deviceTokenErr);
+        console.log('[FCM] Native device FCM token acquisition fallback:', deviceTokenErr);
       }
 
-      // 2. Obtain Expo push token
+      // 2. Obtain Expo push token as supplemental delivery option
       try {
         const expoPush = await Notifications.getExpoPushTokenAsync({
           projectId: '7bf8286a-28e4-4aa2-8329-927d11c1394e',
         });
         if (expoPush && expoPush.data && expoPush.data.trim()) {
           tokensToAdd.push(expoPush.data.trim());
-          console.log('[LandlordNotificationService] Acquired Expo push token:', expoPush.data);
         }
       } catch (expoErr) {
-        console.log('[LandlordNotificationService] Expo token error:', expoErr);
+        console.log('[FCM] Expo push token error:', expoErr);
       }
 
       if (tokensToAdd.length === 0) {
-        console.warn('[LandlordNotificationService] Unable to obtain push token.');
+        console.warn('[FCM] Unable to obtain push token on this device.');
         return null;
       }
+
+      // Log safe token metadata (length and redacted prefix/suffix only)
+      tokensToAdd.forEach((tok, idx) => {
+        const safeToken = tok.length > 12
+          ? `${tok.substring(0, 6)}...${tok.substring(tok.length - 4)} (length: ${tok.length})`
+          : `(length: ${tok.length})`;
+        console.log(`[FCM] FCM TOKEN [${idx + 1}]: ${safeToken}`);
+      });
 
       // Check previously saved token on this device
       const previousToken = await AsyncStorage.getItem(DEVICE_FCM_TOKEN_KEY);
@@ -139,7 +162,7 @@ export const notificationService = {
           });
         }
       } catch (uErr) {
-        console.warn('[LandlordNotificationService] Error updating user doc token:', uErr);
+        console.warn('[FCM] Error updating user doc token in Firestore:', uErr);
       }
 
       // Cache primary token locally
@@ -149,7 +172,7 @@ export const notificationService = {
       if (!pushTokenSubscription) {
         pushTokenSubscription = Notifications.addPushTokenListener((newTokenData) => {
           if (newTokenData?.data && currentRegisteredUid) {
-            console.log('[LandlordNotificationService] Token refreshed by OS');
+            console.log('[FCM] Token refreshed by OS, updating token in Firestore');
             notificationService.registerForPushNotificationsAsync(currentRegisteredUid);
           }
         });
@@ -157,7 +180,7 @@ export const notificationService = {
 
       return tokensToAdd[0];
     } catch (error) {
-      console.warn('[LandlordNotificationService] Could not register push notification token:', error);
+      console.warn('[FCM] Error during push notification token registration:', error);
       return null;
     }
   },

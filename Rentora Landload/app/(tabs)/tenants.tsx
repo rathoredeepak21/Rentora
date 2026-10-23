@@ -24,24 +24,40 @@ export default function TenantsScreen() {
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
+  // Synchronously filter tenants by active tab and search to guarantee immediate, flicker-free rendering
+  const displayedTenants = React.useMemo(() => {
+    const q = (search || '').toLowerCase().trim();
+    return (tenants || []).filter((t) => {
+      if (!t) return false;
+      const status = (t.status || 'active').toLowerCase().trim();
+      const matchTab = activeTab === 'vacated' ? status === 'vacated' : status !== 'vacated';
+      if (!matchTab) return false;
+      if (!q) return true;
+      const name = (t.name || '').toLowerCase();
+      const mobile = (t.mobile || t.mobileNumber || '').toLowerCase();
+      return name.includes(q) || mobile.includes(q);
+    });
+  }, [tenants, activeTab, search]);
+
+  const handleTabChange = useCallback((tab: 'active' | 'vacated') => {
+    setActiveTab(tab);
+  }, []);
+
   const handleRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([refreshTenants(true), refreshProps(true), refreshUnits(true)]);
+    await Promise.all([
+      refreshTenants(true),
+      refreshProps(true),
+      refreshUnits(true),
+    ]);
     setRefreshing(false);
   };
 
   const handleTenantPress = useCallback((id: string) => {
-    router.push({ pathname: '/tenants/[id]', params: { id } });
+    if (id) {
+      router.push({ pathname: '/tenants/[id]', params: { id } });
+    }
   }, [router]);
-
-  // Trigger search on typing
-  useEffect(() => {
-    const delayDebounce = setTimeout(() => {
-      searchTenants(search, activeTab);
-    }, 300);
-
-    return () => clearTimeout(delayDebounce);
-  }, [search, activeTab]);
 
   const isLoading = tenantLoading || propLoading || unitLoading;
 
@@ -52,14 +68,14 @@ export default function TenantsScreen() {
         <View style={styles.tabContainer}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'active' && styles.tabButtonActive]}
-            onPress={() => setActiveTab('active')}
+            onPress={() => handleTabChange('active')}
             activeOpacity={0.8}
           >
             <Text style={[styles.tabText, activeTab === 'active' && styles.tabTextActive]}>Active</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'vacated' && styles.tabButtonActive]}
-            onPress={() => setActiveTab('vacated')}
+            onPress={() => handleTabChange('vacated')}
             activeOpacity={0.8}
           >
             <Text style={[styles.tabText, activeTab === 'vacated' && styles.tabTextActive]}>Vacated</Text>
@@ -89,7 +105,7 @@ export default function TenantsScreen() {
         {/* Content */}
         {isLoading && !refreshing ? (
           <LoadingView message="Loading tenants..." />
-        ) : tenants.length === 0 ? (
+        ) : displayedTenants.length === 0 ? (
           <View style={styles.emptyContainer}>
             <EmptyState
               icon="people-outline"
@@ -113,8 +129,8 @@ export default function TenantsScreen() {
           </View>
         ) : (
           <FlatList
-            data={tenants}
-            keyExtractor={(item) => item.id!}
+            data={displayedTenants}
+            keyExtractor={(item, index) => item?.id || `tenant-${index}`}
             contentContainerStyle={styles.listContainer}
             initialNumToRender={8}
             windowSize={5}
@@ -124,6 +140,7 @@ export default function TenantsScreen() {
               <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[colors.primary]} />
             }
             renderItem={({ item }) => {
+              if (!item) return null;
               // Find property and unit details
               const prop = properties.find((p) => p.id === item.propertyId);
               const unit = units.find((u) => u.id === item.unitId);
@@ -131,8 +148,8 @@ export default function TenantsScreen() {
               return (
                 <TenantCard
                   tenant={item}
-                  propertyName={prop ? prop.name : 'Unknown Property'}
-                  unitNumber={unit ? unit.unitNumber : '...'}
+                  propertyName={prop?.name || 'Unknown Property'}
+                  unitNumber={unit?.unitNumber || '...'}
                   onPress={handleTenantPress}
                 />
               );

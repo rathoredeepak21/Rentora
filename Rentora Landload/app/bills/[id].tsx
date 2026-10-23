@@ -130,7 +130,7 @@ export default function BillDetailsScreen() {
       setUnit(u);
       
       const billPayments = allPayments.filter(p => p.billId === id);
-      billPayments.sort((a,b) => b.paymentDate.localeCompare(a.paymentDate));
+      billPayments.sort((a, b) => ((b && b.paymentDate) || '').localeCompare((a && a.paymentDate) || ''));
       setPayments(billPayments);
     } catch (e) {
       console.error(e);
@@ -157,17 +157,17 @@ export default function BillDetailsScreen() {
       // Get bill settings
       const settings = await settingsService.getSettings(bill.ownerId);
 
-      const pdfUri = await pdfService.generateBillPDF(bill, tenant, property, unit, settings);
+      const pdfUri = await pdfService.generateBillPDF(bill, tenant, property, unit, settings, payments);
 
       if (action === 'share') {
-        const shared = await shareUtils.shareFile(pdfUri);
+        const shared = await shareUtils.shareFile(pdfUri, 'application/pdf', 'Share Invoice PDF');
         if (!shared) {
           Alert.alert('Failed to Share', 'Unable to open share dialogue. Try downloading the file first.');
         }
       } else {
-        // Since expo-print printToFileAsync saves it locally, we can just share it,
-        // or tell the user the URI location. In Expo, Sharing is the primary way to download/save files.
-        await shareUtils.shareFile(pdfUri);
+        // Since expo-print saves it locally, shareUtils presents the file with the standardized filename
+        // allowing the landlord to save, download, or export the PDF.
+        await shareUtils.shareFile(pdfUri, 'application/pdf', 'Save Invoice PDF');
       }
     } catch (e: any) {
       Alert.alert('PDF Error', e.message || 'Failed to generate PDF bill');
@@ -178,6 +178,12 @@ export default function BillDetailsScreen() {
 
   const handleShareTextSummary = async () => {
     if (!bill || !tenant || !property || !unit) return;
+    const totalPayable = Number(bill.totalAmount) || 0;
+    const isPaid = bill.paymentStatus === 'paid' || (bill.remainingAmount !== undefined && Number(bill.remainingAmount) <= 0 && (totalPayable > 0 || (Number(bill.paidAmount) || 0) > 0));
+    const remainingAmountDue = isPaid ? 0 : (bill.remainingAmount !== undefined ? Math.max(0, Number(bill.remainingAmount)) : Math.max(0, totalPayable - (Number(bill.paidAmount) || 0)));
+    const totalPaymentAllocated = Math.max(0, (Number(bill.previousDuePaid) || 0) + (Number(bill.currentBillPaid) || Number(bill.paidAmount) || 0), totalPayable - remainingAmountDue);
+    const isPartial = !isPaid && totalPaymentAllocated > 0 && remainingAmountDue > 0;
+    const status = isPaid ? 'paid' : isPartial ? 'partial' : 'unpaid';
 
     const summaryText = `*RENT INVOICE SUMMARY*
 Property: ${property.name}
@@ -195,11 +201,10 @@ Bill Number: ${bill.billNumber}
 - Other Charges: ₹${bill.otherCharges}
 - Previous Dues: ₹${bill.previousDue}
 
-*TOTAL AMOUNT DUE: ₹${bill.totalAmount}*
-Paid: ₹${bill.paidAmount}
-Remaining Balance: ₹${bill.remainingAmount}
+Original Total Payable: ₹${totalPayable}
+${totalPaymentAllocated > 0 ? `Total payment allocated: ₹${totalPaymentAllocated}\n` : ''}*REMAINING AMOUNT DUE: ₹${remainingAmountDue}*
 
-Payment Status: *${bill.paymentStatus.toUpperCase()}*
+Payment Status: *${status.toUpperCase()}*
 Due Date: *${formatBillDate(bill.dueDate)}*
 
 _Generated via Rentora App._`;
@@ -221,6 +226,23 @@ _Generated via Rentora App._`;
     );
   }
 
+  const totalPayable = Number(bill.totalAmount) || 0;
+  const totalPaymentAllocated = bill.totalPaymentAllocated !== undefined
+    ? Number(bill.totalPaymentAllocated)
+    : Number(bill.paidAmount) || 0;
+
+  const isPaid = (bill.paymentStatus === 'paid' && (totalPaymentAllocated > 0 || totalPayable === 0)) || 
+    (bill.remainingAmount !== undefined && Number(bill.remainingAmount) <= 0 && totalPaymentAllocated >= totalPayable && totalPayable > 0);
+
+  const remainingAmountDue = isPaid 
+    ? 0 
+    : (bill.remainingAmount !== undefined 
+        ? Math.max(0, Number(bill.remainingAmount)) 
+        : Math.max(0, totalPayable - totalPaymentAllocated));
+
+  const isPartial = !isPaid && totalPaymentAllocated > 0 && remainingAmountDue > 0;
+  const status = isPaid ? 'paid' : isPartial ? 'partial' : 'unpaid';
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -233,34 +255,63 @@ _Generated via Rentora App._`;
         <View style={styles.cardHeader}>
           <View style={styles.headerRow}>
             <Text style={styles.billNumberText}>{bill.billNumber}</Text>
-            <StatusBadge status={bill.paymentStatus} type="bill" />
+            <StatusBadge status={status} type="bill" />
           </View>
           <Text style={styles.monthText}>Billing Month: {bill.billingMonth}</Text>
           <View style={styles.dueRow}>
             <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
             <Text style={styles.dueDateText}>Due Date: {formatBillDate(bill.dueDate)}</Text>
           </View>
+
+          {/* Prominent Balance Block */}
           <View style={styles.totalBlock}>
-            <Text style={styles.totalLabel}>Total Payable</Text>
-            <MoneyText amount={bill.totalAmount} style={styles.totalValue} variant="highlight" />
-            {bill.previousDue > 0 && (
-              <View style={styles.totalBreakdownSubBlock}>
+            <Text style={[styles.totalLabel, isPaid ? { color: colors.secondary } : isPartial ? { color: '#D97706' } : undefined]}>
+              REMAINING AMOUNT DUE
+            </Text>
+            <MoneyText
+              amount={remainingAmountDue}
+              style={{
+                ...styles.totalValue,
+                ...(isPaid ? { color: colors.secondary } : isPartial ? { color: '#D97706' } : {})
+              }}
+              variant={isPaid ? 'success' : isPartial ? 'bold' : 'highlight'}
+            />
+
+            <View style={styles.secondaryTotalContainer}>
+              <Text style={styles.secondaryTotalText}>
+                Original Total Payable:{' '}
+                <Text style={styles.secondaryTotalValue}>₹{totalPayable.toLocaleString('en-IN')}</Text>
+              </Text>
+              {bill.previousDue > 0 && (
                 <Text style={styles.totalBreakdownSubText}>
-                  Current Bill: ₹{bill.subtotal || (bill.totalAmount - bill.previousDue)} + Previous Due: ₹{bill.previousDue}
+                  Current Bill: ₹{(bill.subtotal || (totalPayable - bill.previousDue)).toLocaleString('en-IN')} + Previous Due: ₹{bill.previousDue.toLocaleString('en-IN')}
                 </Text>
-              </View>
-            )}
+              )}
+            </View>
           </View>
 
-          {bill.paidAmount > 0 && (
+          {/* Payment Allocation Summary */}
+          {totalPaymentAllocated > 0 && (
             <View style={styles.balanceSummary}>
               <View style={styles.balRow}>
-                <Text style={styles.balLabel}>Paid Amount:</Text>
-                <MoneyText amount={bill.paidAmount} variant="success" style={styles.balValue} />
+                <Text style={styles.balLabel}>Total payment allocated:</Text>
+                <MoneyText amount={totalPaymentAllocated} variant="success" style={styles.balValue} />
               </View>
+              {bill.previousDue > 0 && (Number(bill.previousDuePaid) || 0) > 0 && (
+                <View style={[styles.balRow, { paddingLeft: spacing.sm }]}>
+                  <Text style={[styles.balLabel, { fontSize: typography.sizes.xs }]}>• Allocated to Previous Dues:</Text>
+                  <MoneyText amount={bill.previousDuePaid || 0} variant="success" style={{ fontSize: typography.sizes.xs + 1 }} />
+                </View>
+              )}
+              {bill.previousDue > 0 && (Number(bill.currentBillPaid) || 0) > 0 && (
+                <View style={[styles.balRow, { paddingLeft: spacing.sm }]}>
+                  <Text style={[styles.balLabel, { fontSize: typography.sizes.xs }]}>• Allocated to Current Month:</Text>
+                  <MoneyText amount={bill.currentBillPaid || 0} variant="success" style={{ fontSize: typography.sizes.xs + 1 }} />
+                </View>
+              )}
               <View style={styles.balRow}>
                 <Text style={styles.balLabel}>Remaining Balance:</Text>
-                <MoneyText amount={bill.remainingAmount} variant="danger" style={styles.balValue} />
+                <MoneyText amount={remainingAmountDue} variant={isPaid ? 'success' : 'danger'} style={styles.balValue} />
               </View>
             </View>
           )}
@@ -300,7 +351,7 @@ _Generated via Rentora App._`;
             <Text style={styles.actionIconLabel}>Share Text</Text>
           </TouchableOpacity>
 
-          {bill.paymentStatus !== 'paid' && (
+          {!isPaid && (
             <TouchableOpacity
               style={styles.actionIconButton}
               onPress={() => router.push({ pathname: '/bills/payment', params: { billId: bill.id } })}
@@ -538,8 +589,30 @@ _Generated via Rentora App._`;
           <View style={styles.itemDivider} />
           
           <View style={styles.totalRow}>
-            <Text style={styles.totalBreakdownLabel}>Grand Total</Text>
-            <MoneyText amount={bill.totalAmount} style={styles.totalBreakdownValue} />
+            <Text style={styles.totalBreakdownLabel}>Original Total Payable</Text>
+            <MoneyText amount={totalPayable} style={styles.totalBreakdownValue} />
+          </View>
+
+          {totalPaymentAllocated > 0 && (
+            <View style={styles.totalRow}>
+              <Text style={[styles.totalBreakdownLabel, { color: colors.secondary }]}>Total Payment Allocated</Text>
+              <MoneyText amount={totalPaymentAllocated} variant="success" style={styles.totalBreakdownValue} />
+            </View>
+          )}
+
+          <View style={[styles.totalRow, { marginTop: spacing.xs, paddingTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border }]}>
+            <Text style={[styles.totalBreakdownLabel, { fontWeight: typography.weights.bold, color: isPaid ? colors.secondary : isPartial ? '#D97706' : colors.text }]}>
+              Remaining Amount Due
+            </Text>
+            <MoneyText
+              amount={remainingAmountDue}
+              variant={isPaid ? 'success' : isPartial ? 'bold' : 'bold'}
+              style={{
+                fontWeight: typography.weights.bold,
+                fontSize: typography.sizes.md + 1,
+                color: isPaid ? colors.secondary : isPartial ? '#D97706' : colors.text
+              }}
+            />
           </View>
         </View>
 
@@ -668,6 +741,22 @@ const getStyles = (colors: any) => StyleSheet.create({
   totalValue: {
     fontSize: typography.sizes.xxl,
     marginTop: 4,
+    fontWeight: typography.weights.bold,
+  },
+  secondaryTotalContainer: {
+    marginTop: spacing.xs + 2,
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+  },
+  secondaryTotalText: {
+    fontSize: typography.sizes.xs + 1,
+    color: colors.textSecondary,
+    fontWeight: typography.weights.semibold,
+    textAlign: 'center',
+  },
+  secondaryTotalValue: {
+    fontWeight: typography.weights.bold,
+    color: colors.text,
   },
   totalBreakdownSubBlock: {
     marginTop: spacing.xs,
@@ -678,6 +767,7 @@ const getStyles = (colors: any) => StyleSheet.create({
     color: colors.primary,
     fontWeight: typography.weights.semibold,
     textAlign: 'center',
+    marginTop: 2,
   },
   balanceSummary: {
     width: '100%',
