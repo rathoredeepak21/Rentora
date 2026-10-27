@@ -280,6 +280,49 @@
     }
   }
 
+  // Mobile Navigation Drawer Control (Landing Page)
+  window.toggleMobileNav = function (forceState) {
+    const drawer = document.getElementById('mobileNavDrawer');
+    const backdrop = document.getElementById('mobileNavBackdrop');
+    const btn = document.getElementById('navHamburgerBtn');
+    if (!drawer) return;
+
+    const isOpen = drawer.classList.contains('active');
+    const shouldOpen = typeof forceState === 'boolean' ? forceState : !isOpen;
+
+    if (shouldOpen) {
+      drawer.classList.add('active');
+      if (backdrop) backdrop.classList.add('active');
+      if (btn) btn.classList.add('active');
+      document.body.classList.add('drawer-open');
+    } else {
+      drawer.classList.remove('active');
+      if (backdrop) backdrop.classList.remove('active');
+      if (btn) btn.classList.remove('active');
+      document.body.classList.remove('drawer-open');
+    }
+  };
+
+  // Mobile Portal Sidebar Drawer Control (Dashboard)
+  window.togglePortalSidebar = function (forceState) {
+    const sidebar = document.getElementById('portalSidebar');
+    const backdrop = document.getElementById('portalSidebarBackdrop');
+    if (!sidebar) return;
+
+    const isOpen = sidebar.classList.contains('active');
+    const shouldOpen = typeof forceState === 'boolean' ? forceState : !isOpen;
+
+    if (shouldOpen) {
+      sidebar.classList.add('active');
+      if (backdrop) backdrop.classList.add('active');
+      document.body.classList.add('portal-drawer-open');
+    } else {
+      sidebar.classList.remove('active');
+      if (backdrop) backdrop.classList.remove('active');
+      document.body.classList.remove('portal-drawer-open');
+    }
+  };
+
   window.switchView = function (target) {
     state.view = target;
     const landingView = document.getElementById('landingView');
@@ -287,6 +330,9 @@
     const dashboardView = document.getElementById('dashboardView');
     const viewSwitchLanding = document.getElementById('viewSwitchLanding');
     const viewSwitchDashboard = document.getElementById('viewSwitchDashboard');
+
+    if (typeof window.toggleMobileNav === 'function') window.toggleMobileNav(false);
+    if (typeof window.togglePortalSidebar === 'function') window.togglePortalSidebar(false);
 
     if (landingView) landingView.style.display = 'none';
     if (authView) authView.style.display = 'none';
@@ -305,6 +351,9 @@
       if (dashboardView) dashboardView.style.display = 'block';
       if (viewSwitchDashboard) viewSwitchDashboard.classList.add('active');
       renderAllPortalData();
+      if (typeof window.switchDashboardTab === 'function') {
+        window.switchDashboardTab(state.dashboardTab || 'overview');
+      }
     }
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -324,9 +373,34 @@
     const targetNav = document.getElementById(`nav-${tabName}`);
     if (targetNav) targetNav.classList.add('active');
 
+    // Sync Bottom Navigation Bar
+    document.querySelectorAll('.bottom-nav-item').forEach(el => el.classList.remove('active'));
+    const targetBNav = document.getElementById(`bnav-${tabName}`);
+    if (targetBNav) targetBNav.classList.add('active');
+
+    // Update Mobile Portal Header Title
+    const activeTabLabel = document.getElementById('portalActiveTabName');
+    if (activeTabLabel) {
+      const titles = {
+        overview: 'Overview',
+        properties: 'Properties',
+        units: 'Rooms & Units',
+        tenants: 'Tenants',
+        bills: 'Bills & Payments',
+        settlements: 'Settlements',
+        settings: 'Settings'
+      };
+      activeTabLabel.textContent = titles[tabName] || tabName;
+    }
+
     document.querySelectorAll('.dashboard-panel').forEach(p => p.classList.remove('active'));
     const targetPanel = document.getElementById(`panel-${tabName}`);
     if (targetPanel) targetPanel.classList.add('active');
+
+    // Close mobile portal drawer after selection
+    if (typeof window.togglePortalSidebar === 'function') {
+      window.togglePortalSidebar(false);
+    }
 
     if (tabName === 'settings' && typeof populateSettingsForm === 'function') {
       populateSettingsForm();
@@ -3241,7 +3315,8 @@
         </div>
       </div>
 
-      <table class="invoice-table" style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+      <div class="table-responsive-wrapper" style="margin-bottom: 20px; border: none; background: transparent;">
+      <table class="invoice-table" style="width: 100%; min-width: 520px; border-collapse: collapse; margin-bottom: 0;">
         <thead>
           <tr style="border-bottom: 2px solid var(--border-subtle); background: var(--bg-surface-elevated); font-size: 0.82rem; text-transform: uppercase;">
             <th style="padding: 10px 12px; text-align: left;">Particulars</th>
@@ -3310,6 +3385,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
 
       ${billPayments.length > 0 ? `
         <div style="margin-top: 16px;">
