@@ -548,6 +548,7 @@ input, select, textarea {
    ========================================================================== */
 
 .view-mode-banner {
+  display: none;
   background: linear-gradient(90deg, rgba(79, 70, 229, 0.15) 0%, rgba(16, 185, 129, 0.15) 100%);
   border-bottom: 1px solid var(--glass-border);
   padding: 8px 0;
