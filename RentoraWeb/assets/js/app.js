@@ -341,20 +341,15 @@
     if (viewSwitchLanding) viewSwitchLanding.classList.remove('active');
     if (viewSwitchDashboard) viewSwitchDashboard.classList.remove('active');
 
-    // Toggle body padding class — dashboard/auth manage their own layout
-    document.body.classList.remove('view-dashboard', 'view-auth');
-
     if (target === 'landing') {
       if (landingView) landingView.style.display = 'block';
       if (viewSwitchLanding) viewSwitchLanding.classList.add('active');
     } else if (target === 'auth') {
       if (authView) authView.style.display = 'block';
       if (viewSwitchDashboard) viewSwitchDashboard.classList.add('active');
-      document.body.classList.add('view-auth');
     } else if (target === 'dashboard') {
       if (dashboardView) dashboardView.style.display = 'block';
       if (viewSwitchDashboard) viewSwitchDashboard.classList.add('active');
-      document.body.classList.add('view-dashboard');
       renderAllPortalData();
       if (typeof window.switchDashboardTab === 'function') {
         window.switchDashboardTab(state.dashboardTab || 'overview');
