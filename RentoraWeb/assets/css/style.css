@@ -56,7 +56,7 @@
   --safe-right: env(safe-area-inset-right, 0px);
   --portal-sidebar-width: 260px;
   --portal-bottom-nav-height: 64px;
-  
+
   --transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -81,7 +81,9 @@
 }
 
 /* Global Reset */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -119,7 +121,9 @@ body.portal-drawer-open {
   overflow: hidden !important;
 }
 
-img, video, canvas {
+img,
+video,
+canvas {
   max-width: 100%;
   height: auto;
 }
@@ -140,7 +144,9 @@ button {
   background: none;
 }
 
-input, select, textarea {
+input,
+select,
+textarea {
   font-family: inherit;
   max-width: 100%;
 }
@@ -314,7 +320,8 @@ input, select, textarea {
   position: relative;
 }
 
-.nav-links a:hover, .nav-links a.active {
+.nav-links a:hover,
+.nav-links a.active {
   color: var(--text-main);
 }
 
@@ -678,9 +685,20 @@ input, select, textarea {
 }
 
 @keyframes pulse-green {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
 
 .hero-title {
@@ -853,12 +871,35 @@ input, select, textarea {
   margin-bottom: 4px;
 }
 
-.icon-indigo { background: rgba(79, 70, 229, 0.15); color: #818CF8; }
-.icon-emerald { background: rgba(16, 185, 129, 0.15); color: #34D399; }
-.icon-amber { background: rgba(245, 158, 11, 0.15); color: #FBBF24; }
-.icon-red { background: rgba(239, 68, 68, 0.15); color: #F87171; }
-.icon-cyan { background: rgba(6, 182, 212, 0.15); color: #22D3EE; }
-.icon-purple { background: rgba(168, 85, 247, 0.15); color: #C084FC; }
+.icon-indigo {
+  background: rgba(79, 70, 229, 0.15);
+  color: #818CF8;
+}
+
+.icon-emerald {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34D399;
+}
+
+.icon-amber {
+  background: rgba(245, 158, 11, 0.15);
+  color: #FBBF24;
+}
+
+.icon-red {
+  background: rgba(239, 68, 68, 0.15);
+  color: #F87171;
+}
+
+.icon-cyan {
+  background: rgba(6, 182, 212, 0.15);
+  color: #22D3EE;
+}
+
+.icon-purple {
+  background: rgba(168, 85, 247, 0.15);
+  color: #C084FC;
+}
 
 .feature-title {
   font-family: var(--font-heading);
@@ -1416,9 +1457,20 @@ input, select, textarea {
   text-transform: uppercase;
 }
 
-.badge-occupied { background: rgba(79, 70, 229, 0.15); color: #818CF8; }
-.badge-vacant { background: rgba(16, 185, 129, 0.15); color: #34D399; }
-.badge-vacated { background: rgba(239, 68, 68, 0.15); color: #F87171; }
+.badge-occupied {
+  background: rgba(79, 70, 229, 0.15);
+  color: #818CF8;
+}
+
+.badge-vacant {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34D399;
+}
+
+.badge-vacated {
+  background: rgba(239, 68, 68, 0.15);
+  color: #F87171;
+}
 
 .unit-tenant-row {
   display: flex;
@@ -1586,6 +1638,7 @@ input, select, textarea {
   .container {
     max-width: 1440px;
   }
+
   .portal-container {
     grid-template-columns: 280px 1fr;
   }
@@ -1596,18 +1649,22 @@ input, select, textarea {
   .hero-title {
     font-size: 2.75rem;
   }
+
   .features-grid {
     grid-template-columns: repeat(3, 1fr);
     gap: 20px;
   }
+
   .portal-stats-grid {
     grid-template-columns: repeat(4, 1fr);
     gap: 14px;
   }
+
   .download-box {
     padding: 36px;
     gap: 28px;
   }
+
   .footer-grid {
     gap: 28px;
   }
@@ -1618,33 +1675,42 @@ input, select, textarea {
   .nav-links {
     gap: 16px;
   }
+
   .nav-links a {
     font-size: 0.85rem;
   }
+
   .hero-grid {
     grid-template-columns: 1fr;
     text-align: center;
     gap: 36px;
   }
+
   .hero-content {
     align-items: center;
   }
+
   .hero-subtitle {
     margin: 0 auto;
   }
+
   .hero-cta-group {
     justify-content: center;
   }
+
   .hero-meta-strip {
     justify-content: center;
   }
+
   .hero-visual-card {
     max-width: 620px;
     margin: 0 auto;
   }
+
   .features-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+
   .calc-showcase-box {
     grid-template-columns: 1fr;
     gap: 24px;
@@ -1654,6 +1720,7 @@ input, select, textarea {
   .portal-container {
     grid-template-columns: 1fr;
   }
+
   .portal-sidebar {
     position: fixed;
     top: var(--header-height);
@@ -1669,18 +1736,23 @@ input, select, textarea {
     padding-top: calc(20px + var(--safe-top));
     padding-bottom: calc(20px + var(--safe-bottom));
   }
+
   .portal-sidebar.active {
     transform: translateX(0);
   }
+
   .portal-sidebar-top-bar {
     display: flex;
   }
+
   .portal-mobile-bar {
     display: flex;
   }
+
   .portal-main {
     padding: 24px 20px;
   }
+
   .portal-stats-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 16px;
@@ -1690,9 +1762,11 @@ input, select, textarea {
     grid-template-columns: 1fr;
     text-align: center;
   }
+
   .download-actions {
     justify-content: center;
   }
+
   .footer-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 32px;
@@ -1701,10 +1775,12 @@ input, select, textarea {
 
 /* Tablets Portrait & Large Mobile Screens (641px - 768px) */
 @media (max-width: 768px) {
+
   /* Navigation & Header */
   .nav-links {
     display: none;
   }
+
   .hamburger-btn {
     display: flex;
   }
@@ -1713,14 +1789,17 @@ input, select, textarea {
   .hero-title {
     font-size: 2.35rem;
   }
+
   .hero-meta-strip {
     grid-template-columns: repeat(2, 1fr);
     gap: 16px;
   }
+
   .phone-mockups-container {
     grid-template-columns: 1fr;
     gap: 32px;
   }
+
   .phone-mockup-wrapper {
     width: 100%;
   }
@@ -1737,6 +1816,7 @@ input, select, textarea {
     gap: 20px;
     border-radius: var(--radius-md);
   }
+
   .calc-summary-card {
     padding: 20px 16px;
   }
@@ -1749,16 +1829,19 @@ input, select, textarea {
     max-width: 100%;
     overflow-x: hidden;
   }
+
   .portal-bottom-nav {
     display: flex;
   }
+
   .portal-topbar {
     flex-direction: column;
     align-items: stretch;
     gap: 14px;
     min-width: 0;
   }
-  .portal-topbar > div:first-child select {
+
+  .portal-topbar>div:first-child select {
     min-width: 0 !important;
     width: 100% !important;
   }
@@ -1768,10 +1851,12 @@ input, select, textarea {
     align-items: stretch;
     gap: 12px;
   }
+
   .bill-search-wrapper {
     min-width: 0;
     width: 100%;
   }
+
   .bill-filter-tabs {
     overflow-x: auto;
     padding-bottom: 4px;
@@ -1783,6 +1868,7 @@ input, select, textarea {
   .modal-backdrop {
     padding: 10px;
   }
+
   .modal-container {
     max-height: calc(100vh - 20px);
     max-height: calc(100dvh - 20px);
@@ -1790,13 +1876,16 @@ input, select, textarea {
     width: 100%;
     max-width: 100%;
   }
+
   .modal-body {
     padding: 16px 14px;
     gap: 14px;
   }
+
   .modal-header {
     padding: 14px 16px;
   }
+
   .modal-footer {
     padding: 12px 16px;
   }
@@ -1807,9 +1896,11 @@ input, select, textarea {
     gap: 12px;
     align-items: flex-start;
   }
-  .invoice-header-row > div:last-child {
+
+  .invoice-header-row>div:last-child {
     text-align: left !important;
   }
+
   .invoice-paper {
     padding: 20px 14px;
     max-width: 100%;
@@ -1829,21 +1920,27 @@ input, select, textarea {
   .view-mode-title {
     font-size: 0.78rem;
   }
+
   .view-mode-title span:last-child {
-    display: none; /* Hide verbose secondary text on mobile header */
+    display: none;
+    /* Hide verbose secondary text on mobile header */
   }
+
   .view-switch-tabs {
     width: 100%;
   }
+
   .view-tab-btn {
     flex: 1;
     justify-content: center;
     padding: 6px 10px;
     font-size: 0.78rem;
   }
+
   .tab-label-full {
     display: none;
   }
+
   .tab-label-short {
     display: inline;
   }
@@ -1851,13 +1948,16 @@ input, select, textarea {
   .brand-logo {
     font-size: 1.25rem;
   }
+
   .brand-icon-box {
     width: 34px;
     height: 34px;
   }
+
   .header-cta-btn .btn-text {
     display: none;
   }
+
   .header-cta-btn {
     padding: 8px 12px;
   }
@@ -1866,18 +1966,22 @@ input, select, textarea {
     font-size: 2.1rem;
     line-height: 1.25;
   }
+
   .hero-cta-group {
     flex-direction: column;
     width: 100%;
   }
+
   .hero-cta-group .btn {
     width: 100%;
   }
+
   .hero-visual-overlay {
     padding: 12px 14px;
     flex-wrap: wrap;
     gap: 8px;
   }
+
   .hero-overlay-tag {
     font-size: 0.78rem;
   }
@@ -1886,6 +1990,7 @@ input, select, textarea {
     flex-direction: column;
     gap: 4px;
   }
+
   .radio-toggle-label {
     padding: 8px 12px;
     font-size: 0.8rem;
@@ -1894,15 +1999,19 @@ input, select, textarea {
   .features-grid {
     grid-template-columns: 1fr;
   }
+
   .properties-grid {
     grid-template-columns: 1fr;
     min-width: 0;
   }
+
   .units-grid {
     grid-template-columns: 1fr;
     min-width: 0;
   }
-  .detail-grid-2, .detail-grid-3 {
+
+  .detail-grid-2,
+  .detail-grid-3 {
     grid-template-columns: 1fr;
   }
 
@@ -1910,6 +2019,7 @@ input, select, textarea {
     gap: 12px;
     margin-bottom: 16px;
   }
+
   .portal-topbar .btn {
     flex: 1 1 calc(50% - 6px);
     text-align: center;
@@ -1956,9 +2066,11 @@ input, select, textarea {
     gap: 12px;
     padding: 12px;
   }
+
   .meta-number {
     font-size: 1.25rem;
   }
+
   .meta-label {
     font-size: 0.72rem;
   }
@@ -1966,9 +2078,11 @@ input, select, textarea {
   .section {
     padding: 50px 0;
   }
+
   .section-title {
     font-size: 1.55rem;
   }
+
   .section-desc {
     font-size: 0.86rem;
   }
@@ -1981,6 +2095,7 @@ input, select, textarea {
     padding: 18px 14px;
     border-radius: var(--radius-sm);
   }
+
   .calc-summary-card {
     padding: 16px 12px;
   }
@@ -1995,9 +2110,11 @@ input, select, textarea {
     grid-template-columns: 1fr;
     gap: 12px;
   }
+
   .stat-metric-card {
     padding: 14px;
   }
+
   .stat-count {
     font-size: 1.4rem;
   }
@@ -2005,6 +2122,7 @@ input, select, textarea {
   .property-card {
     padding: 18px 16px;
   }
+
   .unit-card {
     padding: 16px 14px;
   }
@@ -2017,25 +2135,31 @@ input, select, textarea {
   .download-box {
     padding: 24px 16px;
   }
+
   .download-title {
     font-size: 1.65rem;
   }
+
   .download-actions {
     flex-direction: column;
     width: 100%;
   }
+
   .download-actions a.btn {
     width: 100%;
     font-size: 0.92rem;
   }
+
   .apk-meta-badge {
     font-size: 0.76rem;
     text-align: center;
     width: 100%;
   }
+
   .qr-card {
     padding: 16px;
   }
+
   .qr-code-box {
     width: 110px;
     height: 110px;
@@ -2046,6 +2170,7 @@ input, select, textarea {
     right: 12px;
     bottom: calc(var(--portal-bottom-nav-height) + 16px);
   }
+
   .toast {
     min-width: 0;
     max-width: 100%;
@@ -2074,6 +2199,7 @@ input, select, textarea {
     font-size: 1.15rem;
     gap: 6px;
   }
+
   .brand-icon-box {
     width: 30px;
     height: 30px;
@@ -2082,14 +2208,17 @@ input, select, textarea {
   .hero-title {
     font-size: 1.65rem;
   }
+
   .hero-subtitle {
     font-size: 0.82rem;
   }
+
   .hero-meta-strip {
     grid-template-columns: 1fr 1fr;
     gap: 8px;
     padding: 10px;
   }
+
   .meta-number {
     font-size: 1.15rem;
   }
@@ -2099,6 +2228,7 @@ input, select, textarea {
     border-width: 6px;
     border-radius: 26px;
   }
+
   .phone-notch-bar {
     width: 80px;
     height: 14px;
@@ -2107,6 +2237,7 @@ input, select, textarea {
   .calc-showcase-box {
     padding: 14px 10px;
   }
+
   .calc-summary-card {
     padding: 14px 10px;
   }
@@ -2115,17 +2246,21 @@ input, select, textarea {
     padding: 12px 8px;
     padding-bottom: calc(var(--portal-bottom-nav-height) + 20px + var(--safe-bottom));
   }
+
   .portal-mobile-bar {
     padding: 8px 10px;
   }
+
   .portal-menu-btn {
     padding: 6px 10px;
     font-size: 0.82rem;
   }
+
   .portal-mobile-actions .btn {
     padding: 6px 8px;
     font-size: 0.76rem;
   }
+
   .portal-topbar .btn {
     flex: 1 1 100%;
   }
@@ -2133,10 +2268,12 @@ input, select, textarea {
   .portal-bottom-nav {
     padding: 0 4px;
   }
+
   .bottom-nav-item {
     font-size: 0.63rem;
     gap: 2px;
   }
+
   .bottom-nav-item svg {
     width: 17px;
     height: 17px;
@@ -2145,9 +2282,11 @@ input, select, textarea {
   .modal-backdrop {
     padding: 6px;
   }
+
   .modal-body {
     padding: 12px 10px;
   }
+
   .modal-title {
     font-size: 1.05rem;
   }
@@ -2157,6 +2296,7 @@ input, select, textarea {
     height: 32px;
     font-size: 1.1rem;
   }
+
   .stepper-value-box {
     min-width: 48px;
     height: 32px;
@@ -2272,8 +2412,15 @@ input, select, textarea {
 }
 
 @keyframes modal-pop {
-  0% { transform: scale(0.92); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .modal-header {
@@ -2359,13 +2506,28 @@ input, select, textarea {
   font-size: 0.9rem;
 }
 
-.toast.toast-success { border-left: 4px solid var(--secondary); }
-.toast.toast-error { border-left: 4px solid var(--danger); }
-.toast.toast-info { border-left: 4px solid var(--primary); }
+.toast.toast-success {
+  border-left: 4px solid var(--secondary);
+}
+
+.toast.toast-error {
+  border-left: 4px solid var(--danger);
+}
+
+.toast.toast-info {
+  border-left: 4px solid var(--primary);
+}
 
 @keyframes toast-slide {
-  from { transform: translateX(100%); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 /* ==========================================================================
@@ -2401,7 +2563,8 @@ input, select, textarea {
   font-size: 0.92rem;
 }
 
-.invoice-table th, .invoice-table td {
+.invoice-table th,
+.invoice-table td {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -2604,6 +2767,22 @@ input, select, textarea {
   color: #10B981;
 }
 
+/* Demo Mode button — allow text to wrap on narrow mobile screens.
+   .btn sets white-space: nowrap globally; this override lets long labels
+   break to multiple lines while keeping width: 100% (set inline) and
+   growing height naturally. */
+.btn-wrap {
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  height: auto;
+  min-height: 2.25rem;
+  line-height: 1.4;
+  text-align: center;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
 /* ==========================================================================
    EMPTY STATES & LOADING SPINNERS
    ========================================================================== */
@@ -2666,7 +2845,9 @@ input, select, textarea {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ==========================================================================
@@ -2852,6 +3033,7 @@ input, select, textarea {
     opacity: 0;
     transform: translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -3105,7 +3287,9 @@ input, select, textarea {
 }
 
 @media (max-width: 640px) {
-  .detail-grid-2, .detail-grid-3 {
+
+  .detail-grid-2,
+  .detail-grid-3 {
     grid-template-columns: 1fr;
   }
 }
