@@ -1,5 +1,5 @@
 import db from '../utils/db';
-import { Property, Unit, Tenant, Bill, Payment } from '../types';
+import { Property, Unit, Tenant, Bill, Payment, Settlement } from '../types';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
@@ -649,6 +649,424 @@ export const excelReportService = {
     await Sharing.shareAsync(fileUri, {
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       dialogTitle: 'Export Rentora Excel Report',
+      UTI: 'org.openxmlformats.spreadsheetml.sheet',
+    });
+
+    return fileUri;
+  },
+
+  /**
+   * Generates a 4-sheet Tenant-Wise Historical Financial Report (.xlsx)
+   * Sheet 1: Tenant Summary
+   * Sheet 2: Bills History
+   * Sheet 3: Payment History
+   * Sheet 4: Outstanding & Final Settlement
+   */
+  async generateTenantHistoricalReport(
+    tenant: Tenant,
+    settlement: Settlement,
+    property?: Property | null,
+    unit?: Unit | null,
+    bills: Bill[] = [],
+    payments: Payment[] = []
+  ): Promise<string> {
+    const wb = XLSX.utils.book_new();
+
+    const formatCurrency = (val: number): string => {
+      const n = Number(val);
+      if (isNaN(n)) return '0.00';
+      return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatDate = (dateStr?: string | null): string => {
+      if (!dateStr) return '—';
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return String(dateStr);
+        return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      } catch {
+        return String(dateStr);
+      }
+    };
+
+    const formatDateTime = (dateStr?: string | null): string => {
+      if (!dateStr) return '—';
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return String(dateStr);
+        return d.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch {
+        return String(dateStr);
+      }
+    };
+
+    // Filter and sort bills strictly for this tenant
+    const tenantBills = [...bills]
+      .filter((b) => b.tenantId === tenant.id)
+      .sort((a, b) => (a.createdAt || a.dueDate || '').localeCompare(b.createdAt || b.dueDate || ''));
+
+    // Filter and sort payments strictly for this tenant
+    const tenantPayments = [...payments]
+      .filter((p) => p.tenantId === tenant.id)
+      .sort((a, b) => (a.paymentDate || a.createdAt || '').localeCompare(b.paymentDate || b.createdAt || ''));
+
+    const totalBilled = tenantBills.reduce((acc, b) => acc + (Number(b.totalAmount) || 0), 0);
+    const totalPaid = tenantPayments.reduce((acc, p) => acc + (Number(p.amount) || Number(p.amountPaid) || 0), 0);
+    const totalOutstanding = tenantBills.reduce((acc, b) => {
+      if (b.paymentStatus === 'paid') return acc;
+      return acc + (Number(b.remainingAmount) || 0);
+    }, 0);
+
+    const billNumberMap: Record<string, string> = {};
+    tenantBills.forEach((b) => {
+      if (b.id) billNumberMap[b.id] = b.billNumber || b.id;
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // SHEET 1: Tenant Summary
+    // ─────────────────────────────────────────────────────────────
+    const s1Rows: any[][] = [
+      ['RENTORA LANDLORD PLATFORM — TENANT-WISE HISTORICAL REPORT'],
+      ['Generated On', formatDateTime(new Date().toISOString())],
+      ['Report Mode', 'Tenant Financial History (Move-In through Settlement)'],
+      [],
+      ['TENANT INFORMATION'],
+      ['Tenant Name', tenant.name],
+      ['Tenant Permanent ID', tenant.id || '—'],
+      ['Phone Number', tenant.mobileNumber || tenant.mobile || '—'],
+      ['Gender', tenant.gender || '—'],
+      ['Occupation', tenant.occupation || '—'],
+      ['Total Family Members', tenant.totalMembers ?? '—'],
+      ['ID Proof Type', tenant.idProofType || '—'],
+      ['ID Document Number', tenant.documentNumber || '—'],
+      [],
+      ['PROPERTY & UNIT INFORMATION'],
+      ['Property Name', property?.name || '—'],
+      ['Property Type', property?.type || '—'],
+      ['Property Address', property?.address || '—'],
+      ['Room / Unit Number', tenant.unitId ? (unit?.unitNumber || 'Unit') : '—'],
+      ['Floor', unit?.floor || '—'],
+      ['Meter Number', unit?.meterNumber || '—'],
+      ['Initial Meter Reading', tenant.initialMeterReading ?? '—'],
+      ['Final Meter Reading', settlement.finalMeterReading ?? '—'],
+      [],
+      ['TENANCY TIMELINE & TERMS'],
+      ['Move-In Date', formatDate(tenant.moveInDate)],
+      ['Vacate Date', formatDate(tenant.moveOutDate || settlement.moveOutDate)],
+      ['Monthly Rent (Agreed)', Number(tenant.monthlyRent) || 0],
+      ['Security Deposit (Recorded)', Number(tenant.securityDeposit) || 0],
+      ['Advance Rent (Recorded)', Number(tenant.advanceAmount) || 0],
+      ['Tenant Status', tenant.status.toUpperCase()],
+      [],
+      ['FINAL SETTLEMENT SNAPSHOT'],
+      ['Settlement Number', settlement.settlementNumber],
+      ['Settlement Date & Time', formatDateTime(settlement.createdAt || settlement.settlementDate)],
+      ['Normal Billing Period End', formatDate(settlement.normalPeriodEndDate)],
+      ['Actual Move-Out Date', formatDate(settlement.moveOutDate)],
+      ['Extra Stay Policy', settlement.extraStayPolicy === 'fixed30' ? 'Fixed 30 Days' : 'Actual Billing Period'],
+      ['Extra Stay Days Count', settlement.eligibleExtraDays ?? 0],
+      ['Daily Rent Rate Basis', Number(settlement.dailyRateBasis) || 0],
+      ['Extra Stay Rent Amount', Number(settlement.extraStayAmount) || 0],
+      ['Final Electricity Units', settlement.electricityUnits ?? 0],
+      ['Electricity Billing Rate', Number(settlement.electricityRate) || 0],
+      ['Final Electricity Charges', Number(settlement.electricityCharge) || 0],
+      ['Other Charges / Adjustments', Number(settlement.otherCharges) || 0],
+      ['Total Charges Payable (A)', Number(settlement.totalCharges) || 0],
+      ['Advance Rent Adjusted (B1)', Number(settlement.advanceRentAdjusted) || 0],
+      ['Security Deposit Adjusted (B2)', Number(settlement.securityDepositAdjusted) || 0],
+      ['Total Deductions (B)', (Number(settlement.advanceRentAdjusted) || 0) + (Number(settlement.securityDepositAdjusted) || 0)],
+      ['Final Net Amount', Number(settlement.finalAmount) || 0],
+      [
+        'Final Settlement Status',
+        settlement.finalStatus === 'payable'
+          ? 'PAYABLE BY TENANT'
+          : settlement.finalStatus === 'refundable'
+          ? 'REFUNDABLE TO TENANT'
+          : 'FULLY SETTLED (ZERO BALANCE)',
+      ],
+      [],
+      ['OVERALL FINANCIAL SUMMARY'],
+      ['Total Bills Raised', tenantBills.length],
+      ['Total Payment Transactions', tenantPayments.length],
+      ['Total Amount Billed (₹)', totalBilled],
+      ['Total Payments Collected (₹)', totalPaid],
+      ['Total Outstanding Dues (₹)', totalOutstanding],
+    ];
+
+    const wsSummary = XLSX.utils.aoa_to_sheet(s1Rows);
+    wsSummary['!cols'] = [{ wch: 34 }, { wch: 48 }];
+
+    // ─────────────────────────────────────────────────────────────
+    // SHEET 2: Bills History
+    // ─────────────────────────────────────────────────────────────
+    const s2Headers = [
+      'Bill #',
+      'Bill Number',
+      'Billing Month',
+      'Bill Issue Date',
+      'Due Date',
+      'Monthly Rent (₹)',
+      'Electricity Units',
+      'Electricity Rate (₹/unit)',
+      'Electricity Charge (₹)',
+      'Water Charge (₹)',
+      'Parking Charge (₹)',
+      'Maintenance Charge (₹)',
+      'Other Charges (₹)',
+      'Previous Due (₹)',
+      'Subtotal (₹)',
+      'Total Bill Amount (₹)',
+      'Paid Amount (₹)',
+      'Outstanding Amount (₹)',
+      'Payment Status',
+      'Prev Meter Reading',
+      'Curr Meter Reading',
+      'Prev Reading Date',
+      'Curr Reading Date',
+      'Bill Notes',
+    ];
+
+    const s2Rows: any[][] = [s2Headers];
+    tenantBills.forEach((b, idx) => {
+      s2Rows.push([
+        idx + 1,
+        b.billNumber || '—',
+        b.billingMonth || '—',
+        formatDate(b.createdAt),
+        formatDate(b.dueDate),
+        Number(b.rent) || 0,
+        Number(b.electricityUnits) || 0,
+        Number(b.electricityRate) || 0,
+        Number(b.electricityCharge) || 0,
+        Number(b.waterCharge) || 0,
+        Number(b.parkingCharge) || 0,
+        Number(b.maintenanceCharge) || 0,
+        Number(b.otherCharges) || 0,
+        Number(b.previousDue) || 0,
+        Number(b.subtotal) || 0,
+        Number(b.totalAmount) || 0,
+        Number(b.paidAmount) || 0,
+        Number(b.remainingAmount) || 0,
+        (b.paymentStatus || 'unpaid').toUpperCase(),
+        b.previousMeterReading ?? '—',
+        b.currentMeterReading ?? '—',
+        formatDate(b.previousMeterReadingDate),
+        formatDate(b.currentMeterReadingDate),
+        b.notes || '',
+      ]);
+    });
+
+    // Total row for Bills
+    s2Rows.push([
+      'TOTAL',
+      '',
+      '',
+      '',
+      '',
+      tenantBills.reduce((acc, b) => acc + (Number(b.rent) || 0), 0),
+      tenantBills.reduce((acc, b) => acc + (Number(b.electricityUnits) || 0), 0),
+      '',
+      tenantBills.reduce((acc, b) => acc + (Number(b.electricityCharge) || 0), 0),
+      tenantBills.reduce((acc, b) => acc + (Number(b.waterCharge) || 0), 0),
+      tenantBills.reduce((acc, b) => acc + (Number(b.parkingCharge) || 0), 0),
+      tenantBills.reduce((acc, b) => acc + (Number(b.maintenanceCharge) || 0), 0),
+      tenantBills.reduce((acc, b) => acc + (Number(b.otherCharges) || 0), 0),
+      '',
+      tenantBills.reduce((acc, b) => acc + (Number(b.subtotal) || 0), 0),
+      totalBilled,
+      tenantBills.reduce((acc, b) => acc + (Number(b.paidAmount) || 0), 0),
+      totalOutstanding,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ]);
+
+    const wsBills = XLSX.utils.aoa_to_sheet(s2Rows);
+
+    // ─────────────────────────────────────────────────────────────
+    // SHEET 3: Payment History
+    // ─────────────────────────────────────────────────────────────
+    const s3Headers = [
+      'Txn #',
+      'Payment Date',
+      'Time (Recorded)',
+      'Payment Amount (₹)',
+      'Payment Mode',
+      'Transaction / Ref ID',
+      'Associated Bill Number',
+      'Verification Status',
+      'Bill Month Ref',
+    ];
+
+    const s3Rows: any[][] = [s3Headers];
+    tenantPayments.forEach((p, idx) => {
+      const associatedBill = tenantBills.find((b) => b.id === p.billId);
+      const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
+      s3Rows.push([
+        idx + 1,
+        formatDate(p.paymentDate),
+        timeStr,
+        Number(p.amount) || Number(p.amountPaid) || 0,
+        (p.paymentMethod || 'cash').toUpperCase(),
+        p.transactionId || '—',
+        associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment',
+        (p.status || 'approved').toUpperCase(),
+        associatedBill?.billingMonth || '—',
+      ]);
+    });
+
+    s3Rows.push(['TOTAL', '', '', totalPaid, '', '', '', '', '']);
+
+    const wsPayments = XLSX.utils.aoa_to_sheet(s3Rows);
+
+    // ─────────────────────────────────────────────────────────────
+    // SHEET 4: Outstanding & Final Settlement
+    // ─────────────────────────────────────────────────────────────
+    const unpaidBills = tenantBills.filter((b) => b.paymentStatus !== 'paid');
+
+    const s4Rows: any[][] = [
+      ['A. OUTSTANDING BILLS RECORD'],
+      ['Bill #', 'Bill Number', 'Billing Month', 'Due Date', 'Total Amount (₹)', 'Paid Amount (₹)', 'Remaining Dues (₹)', 'Status'],
+    ];
+
+    if (unpaidBills.length === 0) {
+      s4Rows.push(['—', 'All generated bills have been paid in full', '', '', 0, 0, 0, 'CLEARED']);
+    } else {
+      unpaidBills.forEach((b, idx) => {
+        s4Rows.push([
+          idx + 1,
+          b.billNumber,
+          b.billingMonth,
+          formatDate(b.dueDate),
+          Number(b.totalAmount) || 0,
+          Number(b.paidAmount) || 0,
+          Number(b.remainingAmount) || 0,
+          (b.paymentStatus || 'unpaid').toUpperCase(),
+        ]);
+      });
+      s4Rows.push([
+        'SUBTOTAL',
+        '',
+        '',
+        '',
+        unpaidBills.reduce((acc, b) => acc + (Number(b.totalAmount) || 0), 0),
+        unpaidBills.reduce((acc, b) => acc + (Number(b.paidAmount) || 0), 0),
+        totalOutstanding,
+        '',
+      ]);
+    }
+
+    s4Rows.push([]);
+    s4Rows.push(['B. FINAL SETTLEMENT BREAKDOWN']);
+    s4Rows.push(['Settlement Document Number', settlement.settlementNumber]);
+    s4Rows.push(['Settlement Date & Time', formatDateTime(settlement.createdAt || settlement.settlementDate)]);
+    s4Rows.push(['Billing Cycle End Date', formatDate(settlement.normalPeriodEndDate)]);
+    s4Rows.push(['Actual Move-Out Date', formatDate(settlement.moveOutDate)]);
+    s4Rows.push(['Extra Stay Calculation Policy', settlement.extraStayPolicy === 'fixed30' ? 'Fixed 30 Days' : 'Actual Billing Period']);
+    s4Rows.push(['Eligible Extra Stay Days', settlement.eligibleExtraDays ?? 0]);
+    s4Rows.push(['Daily Rate Basis (₹/day)', Number(settlement.dailyRateBasis) || 0]);
+    s4Rows.push(['Extra Stay Rent (₹)', Number(settlement.extraStayAmount) || 0]);
+    s4Rows.push(['Final Electricity Previous Reading', settlement.previousMeterReading ?? '—']);
+    s4Rows.push(['Final Electricity Exit Reading', settlement.finalMeterReading ?? '—']);
+    s4Rows.push(['Final Electricity Units Consumed', settlement.electricityUnits ?? 0]);
+    s4Rows.push(['Final Electricity Billing Rate (₹/unit)', Number(settlement.electricityRate) || 0]);
+    s4Rows.push(['Final Electricity Charge (₹)', Number(settlement.electricityCharge) || 0]);
+    s4Rows.push(['Outstanding Bills Balance (at move-out) (₹)', Number(settlement.outstandingBillsBalance) || 0]);
+    s4Rows.push(['Other Charges / Penalties (₹)', Number(settlement.otherCharges) || 0]);
+    if (settlement.otherChargesNotes) {
+      s4Rows.push(['Other Charges Notes', settlement.otherChargesNotes]);
+    }
+    s4Rows.push(['TOTAL CHARGES (A) (₹)', Number(settlement.totalCharges) || 0]);
+    s4Rows.push([]);
+    s4Rows.push(['C. ADVANCE RENT & SECURITY DEPOSIT DEDUCTIONS']);
+    s4Rows.push(['Advance Rent Original (₹)', Number(settlement.advanceRentOriginal) || 0]);
+    s4Rows.push(['Advance Rent Adjusted against dues (₹)', Number(settlement.advanceRentAdjusted) || 0]);
+    s4Rows.push(['Advance Rent Refunded directly (₹)', Number(settlement.advanceRentRefunded) || 0]);
+    s4Rows.push(['Advance Rent Remaining balance (₹)', Number(settlement.advanceRentRemaining) || 0]);
+    s4Rows.push(['Security Deposit Original (₹)', Number(settlement.securityDepositOriginal) || 0]);
+    s4Rows.push(['Security Deposit Adjusted against dues (₹)', Number(settlement.securityDepositAdjusted) || 0]);
+    s4Rows.push(['Security Deposit Refunded directly (₹)', Number(settlement.securityDepositRefunded) || 0]);
+    s4Rows.push(['Security Deposit Remaining balance (₹)', Number(settlement.securityDepositRemaining) || 0]);
+    s4Rows.push([
+      'TOTAL DEDUCTIONS APPLIED (B) (₹)',
+      (Number(settlement.advanceRentAdjusted) || 0) + (Number(settlement.securityDepositAdjusted) || 0),
+    ]);
+    s4Rows.push([]);
+    s4Rows.push(['D. FINAL SETTLEMENT RESULT']);
+    s4Rows.push(['Final Net Amount (A - B) (₹)', Number(settlement.finalAmount) || 0]);
+    s4Rows.push([
+      'Settlement Outcome',
+      settlement.finalStatus === 'payable'
+        ? 'TENANT OWES LANDLORD (PAYABLE)'
+        : settlement.finalStatus === 'refundable'
+        ? 'LANDLORD REFUNDS TENANT (REFUNDABLE)'
+        : 'BALANCE ZERO — FULLY SETTLED',
+    ]);
+    if (settlement.notes) {
+      s4Rows.push(['Settlement Remarks / Notes', settlement.notes]);
+    }
+
+    const wsOutstanding = XLSX.utils.aoa_to_sheet(s4Rows);
+    wsOutstanding['!cols'] = [{ wch: 42 }, { wch: 48 }];
+
+    // Auto-fit helper
+    const autoFit = (ws: XLSX.WorkSheet) => {
+      if (!ws || !ws['!ref']) return;
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      const cols = ws['!cols'] ? [...ws['!cols']] : [];
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        let maxWidth = cols[C]?.wch || 12;
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+          if (cell && cell.v !== undefined) {
+            const valStr = String(cell.v);
+            if (valStr.length > maxWidth) {
+              maxWidth = Math.min(valStr.length, 50);
+            }
+          }
+        }
+        cols[C] = { wch: maxWidth + 3 };
+      }
+      ws['!cols'] = cols;
+    };
+
+    autoFit(wsSummary);
+    autoFit(wsBills);
+    autoFit(wsPayments);
+    autoFit(wsOutstanding);
+
+    // Apply Freeze Panes
+    wsSummary['!views'] = [{ state: 'frozen', ySplit: 1 }];
+    wsBills['!views'] = [{ state: 'frozen', ySplit: 1 }];
+    wsPayments['!views'] = [{ state: 'frozen', ySplit: 1 }];
+
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Tenant Summary');
+    XLSX.utils.book_append_sheet(wb, wsBills, 'Bills History');
+    XLSX.utils.book_append_sheet(wb, wsPayments, 'Payment History');
+    XLSX.utils.book_append_sheet(wb, wsOutstanding, 'Settlement & Dues');
+
+    const sanitizeFileName = (name: string): string => name.replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const safeTenantName = sanitizeFileName(tenant.name || 'Tenant');
+    const filename = `Rentora_HistoricalReport_${safeTenantName}_${tenant.id || 'id'}.xlsx`;
+    const fileUri = `${FileSystem.documentDirectory}${filename}`;
+
+    const base64Content = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+    await FileSystem.writeAsStringAsync(fileUri, base64Content, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    await Sharing.shareAsync(fileUri, {
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      dialogTitle: `Tenant Historical Report — ${tenant.name}`,
       UTI: 'org.openxmlformats.spreadsheetml.sheet',
     });
 

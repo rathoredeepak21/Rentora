@@ -1394,6 +1394,543 @@ export const pdfService = {
       console.error('Settlement PDF Generation Error', e);
       throw new Error('Could not generate Settlement PDF. Please check printer configuration.');
     }
+  },
+
+  /**
+   * Generates a comprehensive Tenant-Wise Historical Financial PDF Report.
+   * Includes Tenant Information, Bills History Table, Payment Transactions Table,
+   * Outstanding Arrears & Final Settlement Snapshot.
+   */
+  async generateTenantHistoricalPDF(
+    tenant: Tenant,
+    settlement: Settlement,
+    property?: Property | null,
+    unit?: Unit | null,
+    bills: Bill[] = [],
+    payments: Payment[] = [],
+    settings?: BillSettings | null
+  ): Promise<string> {
+    const ownerName = settings?.ownerName || settings?.businessName || property?.name || 'Property Owner';
+    const businessName = settings?.businessName || property?.name || 'Rentora Landlord Platform';
+    const address = settings?.address || property?.address || '';
+    const phone = settings?.phone || '';
+
+    let localLogoBase64: string | null = null;
+    let localSignatureBase64: string | null = null;
+
+    if (settings?.logoUrl) {
+      localLogoBase64 = await getBase64Image(settings.logoUrl);
+    }
+    if (settings?.signatureUrl) {
+      localSignatureBase64 = await getBase64Image(settings.signatureUrl);
+    }
+
+    const tenantBills = [...bills]
+      .filter((b) => b.tenantId === tenant.id)
+      .sort((a, b) => (a.createdAt || a.dueDate || '').localeCompare(b.createdAt || b.dueDate || ''));
+
+    const tenantPayments = [...payments]
+      .filter((p) => p.tenantId === tenant.id)
+      .sort((a, b) => (a.paymentDate || a.createdAt || '').localeCompare(b.paymentDate || b.createdAt || ''));
+
+    const totalBilled = tenantBills.reduce((acc, b) => acc + (Number(b.totalAmount) || 0), 0);
+    const totalPaid = tenantPayments.reduce((acc, p) => acc + (Number(p.amount) || Number(p.amountPaid) || 0), 0);
+    const totalOutstanding = tenantBills.reduce((acc, b) => {
+      if (b.paymentStatus === 'paid') return acc;
+      return acc + (Number(b.remainingAmount) || 0);
+    }, 0);
+
+    const billNumberMap: Record<string, string> = {};
+    tenantBills.forEach((b) => {
+      if (b.id) billNumberMap[b.id] = b.billNumber || b.id;
+    });
+
+    const formatINR = (val: number): string => {
+      const n = Number(val) || 0;
+      return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatDateStr = (dateStr?: string | null): string => {
+      if (!dateStr) return '—';
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return String(dateStr);
+        return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      } catch {
+        return String(dateStr);
+      }
+    };
+
+    const formatDateTimeStr = (dateStr?: string | null): string => {
+      if (!dateStr) return '—';
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return String(dateStr);
+        return d.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch {
+        return String(dateStr);
+      }
+    };
+
+    const isPayable = settlement.finalStatus === 'payable';
+    const isRefundable = settlement.finalStatus === 'refundable';
+    const netAmountFormatted = Math.abs(settlement.finalAmount || 0).toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    const netStatusBadge = isPayable
+      ? 'AMOUNT PAYABLE BY TENANT'
+      : isRefundable
+      ? 'AMOUNT REFUNDABLE TO TENANT'
+      : 'FULLY SETTLED (ZERO BALANCE)';
+    const netStatusColor = isPayable ? '#DC2626' : isRefundable ? '#16A34A' : '#4B5563';
+
+    // Build bills table rows
+    const billsRowsHtml = tenantBills.length === 0
+      ? `<tr><td colspan="11" style="text-align: center; color: #6B7280; padding: 12px;">No historical bills found for this tenant</td></tr>`
+      : tenantBills
+          .map((b, idx) => {
+            const statusClass = b.paymentStatus === 'paid' ? 'badge-paid' : b.paymentStatus === 'partial' ? 'badge-partial' : 'badge-unpaid';
+            return `
+            <tr>
+              <td style="text-align: center;">${idx + 1}</td>
+              <td class="bold">${b.billNumber || '—'}</td>
+              <td>${b.billingMonth || '—'}</td>
+              <td>${formatDateStr(b.dueDate)}</td>
+              <td class="text-right">${formatINR(b.rent)}</td>
+              <td class="text-right">${b.electricityUnits ?? 0} u (${formatINR(b.electricityCharge)})</td>
+              <td class="text-right">${formatINR(b.waterCharge)}</td>
+              <td class="text-right">${formatINR(b.previousDue)}</td>
+              <td class="text-right bold">${formatINR(b.totalAmount)}</td>
+              <td class="text-right text-success">${formatINR(b.paidAmount)}</td>
+              <td class="text-right text-danger">${formatINR(b.remainingAmount)}</td>
+              <td style="text-align: center;"><span class="badge ${statusClass}">${(b.paymentStatus || 'unpaid').toUpperCase()}</span></td>
+            </tr>
+          `;
+          })
+          .join('');
+
+    // Build payments table rows
+    const paymentsRowsHtml = tenantPayments.length === 0
+      ? `<tr><td colspan="7" style="text-align: center; color: #6B7280; padding: 12px;">No payment transactions recorded for this tenant</td></tr>`
+      : tenantPayments
+          .map((p, idx) => {
+            const associatedBill = tenantBills.find((b) => b.id === p.billId);
+            const billDisplay = associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment';
+            const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
+            return `
+            <tr>
+              <td style="text-align: center;">${idx + 1}</td>
+              <td>${formatDateStr(p.paymentDate)}</td>
+              <td>${timeStr}</td>
+              <td class="text-right bold text-success">${formatINR(Number(p.amount) || Number(p.amountPaid) || 0)}</td>
+              <td>${(p.paymentMethod || 'cash').toUpperCase()}</td>
+              <td style="font-family: monospace; font-size: 9.5px;">${p.transactionId || '—'}</td>
+              <td class="bold">${billDisplay}</td>
+            </tr>
+          `;
+          })
+          .join('');
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Tenant Historical Report — ${tenant.name}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 10mm 10mm;
+          }
+          *, *::before, *::after {
+            box-sizing: border-box;
+          }
+          body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #1F2937;
+            margin: 0;
+            padding: 0;
+            font-size: 10.5px;
+            line-height: 1.45;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2.5px solid #4F46E5;
+            padding-bottom: 12px;
+            margin-bottom: 14px;
+          }
+          .brand-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #4F46E5;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0;
+          }
+          .business-name {
+            font-size: 11px;
+            font-weight: 700;
+            color: #111827;
+            margin-top: 2px;
+          }
+          .business-sub {
+            font-size: 9.5px;
+            color: #6B7280;
+            margin-top: 1px;
+          }
+          .report-badge {
+            text-align: right;
+          }
+          .report-main-title {
+            font-size: 14px;
+            font-weight: 800;
+            color: #111827;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin: 0;
+          }
+          .report-date {
+            font-size: 9px;
+            color: #6B7280;
+            margin-top: 3px;
+          }
+          .section-title {
+            font-size: 11px;
+            font-weight: 800;
+            color: #4F46E5;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1.5px solid #E5E7EB;
+            padding-bottom: 4px;
+            margin-top: 16px;
+            margin-bottom: 8px;
+          }
+          .info-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px 14px;
+            background: #F9FAFB;
+            border: 1px solid #E5E7EB;
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
+          }
+          .info-cell label {
+            display: block;
+            font-size: 8px;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #6B7280;
+            letter-spacing: 0.3px;
+          }
+          .info-cell span {
+            font-size: 10px;
+            font-weight: 600;
+            color: #111827;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 6px;
+            margin-bottom: 10px;
+            font-size: 9.5px;
+          }
+          th {
+            background-color: #4F46E5;
+            color: #FFFFFF;
+            font-weight: 700;
+            text-align: left;
+            padding: 5px 6px;
+            font-size: 8.5px;
+            text-transform: uppercase;
+          }
+          td {
+            padding: 4.5px 6px;
+            border-bottom: 1px solid #E5E7EB;
+          }
+          tr:nth-child(even) td {
+            background-color: #F9FAFB;
+          }
+          .text-right {
+            text-align: right;
+          }
+          .bold {
+            font-weight: 700;
+          }
+          .text-success {
+            color: #16A34A;
+          }
+          .text-danger {
+            color: #DC2626;
+          }
+          .total-row td {
+            background-color: #EEF2FF !important;
+            font-weight: 800;
+            border-top: 1.5px solid #4F46E5;
+            border-bottom: 1.5px solid #4F46E5;
+          }
+          .badge {
+            display: inline-block;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-size: 7.5px;
+            font-weight: 700;
+          }
+          .badge-paid {
+            background-color: #DCFCE7;
+            color: #166534;
+          }
+          .badge-partial {
+            background-color: #FEF3C7;
+            color: #92400E;
+          }
+          .badge-unpaid {
+            background-color: #FEE2E2;
+            color: #991B1B;
+          }
+          .settlement-card {
+            background: #F0FDF4;
+            border: 1.5px solid #86EFAC;
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-top: 8px;
+            margin-bottom: 14px;
+          }
+          .settlement-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px 18px;
+            margin-bottom: 10px;
+          }
+          .settlement-net-box {
+            background: #FFFFFF;
+            border: 1.5px solid ${netStatusColor};
+            border-radius: 6px;
+            padding: 10px 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          }
+          .net-badge-title {
+            font-size: 11px;
+            font-weight: 800;
+            color: ${netStatusColor};
+            text-transform: uppercase;
+          }
+          .net-amount {
+            font-size: 16px;
+            font-weight: 800;
+            color: ${netStatusColor};
+          }
+          .footer-note {
+            margin-top: 18px;
+            padding-top: 10px;
+            border-top: 1px solid #E5E7EB;
+            font-size: 8px;
+            color: #9CA3AF;
+            text-align: center;
+          }
+        </style>
+      </head>
+      <body>
+        <!-- Header -->
+        <div class="header">
+          <div>
+            ${localLogoBase64 ? `<img src="${localLogoBase64}" style="height: 32px; max-width: 120px; object-fit: contain; margin-bottom: 4px;" /><br/>` : ''}
+            <div class="brand-title">Rentora</div>
+            <div class="business-name">${businessName}</div>
+            ${address ? `<div class="business-sub">${address}</div>` : ''}
+            ${phone ? `<div class="business-sub">Landlord Phone: ${phone}</div>` : ''}
+          </div>
+          <div class="report-badge">
+            <div class="report-main-title">Tenant-Wise Historical Report</div>
+            <div class="report-date">Generated: ${formatDateTimeStr(new Date().toISOString())}</div>
+            <div class="report-date" style="font-weight: 700; color: #4F46E5;">Settlement: ${settlement.settlementNumber}</div>
+            <div class="report-date" style="color: #059669; font-weight: 600;">Tenancy Status: VACATED</div>
+          </div>
+        </div>
+
+        <!-- 1. Tenant & Property Information -->
+        <div class="section-title">1. Tenant & Tenancy Summary</div>
+        <div class="info-grid">
+          <div class="info-cell"><label>Tenant Full Name</label><span>${tenant.name}</span></div>
+          <div class="info-cell"><label>Tenant Permanent ID</label><span style="font-family: monospace;">${tenant.id || '—'}</span></div>
+          <div class="info-cell"><label>Mobile Number</label><span>${tenant.mobileNumber || tenant.mobile || '—'}</span></div>
+          <div class="info-cell"><label>Property Name</label><span>${property?.name || '—'}</span></div>
+          <div class="info-cell"><label>Unit / Room</label><span>Unit ${unit?.unitNumber || settlement.unitNumber || '—'} (${unit?.floor || '—'})</span></div>
+          <div class="info-cell"><label>Electric Meter Number</label><span>${unit?.meterNumber || '—'}</span></div>
+          <div class="info-cell"><label>Move-In Date</label><span>${formatDateStr(tenant.moveInDate)}</span></div>
+          <div class="info-cell"><label>Vacate Date</label><span>${formatDateStr(tenant.moveOutDate || settlement.moveOutDate)}</span></div>
+          <div class="info-cell"><label>Agreed Monthly Rent</label><span>${formatINR(tenant.monthlyRent)}</span></div>
+          <div class="info-cell"><label>Security Deposit Held</label><span>${formatINR(tenant.securityDeposit || 0)}</span></div>
+          <div class="info-cell"><label>Advance Rent Received</label><span>${formatINR(tenant.advanceAmount || 0)}</span></div>
+          <div class="info-cell"><label>Initial Meter Reading</label><span>${tenant.initialMeterReading ?? '—'}</span></div>
+          ${tenant.occupation ? `<div class="info-cell"><label>Occupation</label><span>${tenant.occupation}</span></div>` : ''}
+          ${tenant.idProofType ? `<div class="info-cell"><label>ID Proof</label><span>${tenant.idProofType.toUpperCase()} (${tenant.documentNumber || '—'})</span></div>` : ''}
+          ${tenant.totalMembers ? `<div class="info-cell"><label>Members</label><span>${tenant.totalMembers} Person(s)</span></div>` : ''}
+        </div>
+
+        <!-- 2. Bills History -->
+        <div class="section-title">2. Complete Bills History (${tenantBills.length} Bill${tenantBills.length === 1 ? '' : 's'})</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 24px; text-align: center;">#</th>
+              <th>Bill Number</th>
+              <th>Month</th>
+              <th>Due Date</th>
+              <th class="text-right">Rent</th>
+              <th class="text-right">Electricity</th>
+              <th class="text-right">Water</th>
+              <th class="text-right">Prev Due</th>
+              <th class="text-right">Total</th>
+              <th class="text-right">Paid</th>
+              <th class="text-right">Remaining</th>
+              <th style="text-align: center;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${billsRowsHtml}
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="4" style="text-align: right;">TOTALS</td>
+              <td class="text-right">${formatINR(tenantBills.reduce((s, b) => s + (Number(b.rent) || 0), 0))}</td>
+              <td class="text-right">${formatINR(tenantBills.reduce((s, b) => s + (Number(b.electricityCharge) || 0), 0))}</td>
+              <td class="text-right">${formatINR(tenantBills.reduce((s, b) => s + (Number(b.waterCharge) || 0), 0))}</td>
+              <td class="text-right">${formatINR(tenantBills.reduce((s, b) => s + (Number(b.previousDue) || 0), 0))}</td>
+              <td class="text-right bold">${formatINR(totalBilled)}</td>
+              <td class="text-right bold text-success">${formatINR(tenantBills.reduce((s, b) => s + (Number(b.paidAmount) || 0), 0))}</td>
+              <td class="text-right bold text-danger">${formatINR(totalOutstanding)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <!-- 3. Payments History -->
+        <div class="section-title">3. Complete Payment Transactions (${tenantPayments.length} Transaction${tenantPayments.length === 1 ? '' : 's'})</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 24px; text-align: center;">#</th>
+              <th>Payment Date</th>
+              <th>Time</th>
+              <th class="text-right">Amount (₹)</th>
+              <th>Payment Mode</th>
+              <th>Transaction / Reference ID</th>
+              <th>Associated Bill</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paymentsRowsHtml}
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="3" style="text-align: right;">TOTAL PAYMENTS COLLECTED</td>
+              <td class="text-right text-success">${formatINR(totalPaid)}</td>
+              <td colspan="3"></td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <!-- 4. Final Settlement & Deductions Breakdown -->
+        <div class="section-title">4. Outstanding Arrears & Final Settlement Snapshot</div>
+        <div class="settlement-card">
+          <div class="settlement-grid">
+            <div class="info-cell"><label>Settlement Number</label><span class="bold">${settlement.settlementNumber}</span></div>
+            <div class="info-cell"><label>Settlement Date</label><span>${formatDateTimeStr(settlement.createdAt || settlement.settlementDate)}</span></div>
+            <div class="info-cell"><label>Billing Cycle End Date</label><span>${formatDateStr(settlement.normalPeriodEndDate)}</span></div>
+            <div class="info-cell"><label>Actual Move-Out Date</label><span>${formatDateStr(settlement.moveOutDate)}</span></div>
+            <div class="info-cell"><label>Extra Stay Calculation</label><span>${settlement.eligibleExtraDays ?? 0} Day(s) @ ${formatINR(settlement.dailyRateBasis)}/day</span></div>
+            <div class="info-cell"><label>Extra Stay Rent Amount</label><span class="bold">${formatINR(settlement.extraStayAmount)}</span></div>
+            <div class="info-cell"><label>Final Electricity Reading</label><span>${settlement.previousMeterReading ?? '—'} → ${settlement.finalMeterReading ?? '—'} (${settlement.electricityUnits ?? 0} units)</span></div>
+            <div class="info-cell"><label>Final Electricity Charges</label><span class="bold">${formatINR(settlement.electricityCharge)}</span></div>
+            <div class="info-cell"><label>Unpaid Bills at Move-Out</label><span>${formatINR(settlement.outstandingBillsBalance)}</span></div>
+            <div class="info-cell"><label>Other Pending Charges</label><span>${formatINR(settlement.otherCharges)}</span></div>
+            <div class="info-cell"><label>Total Charges (A)</label><span class="bold" style="color: #4F46E5;">${formatINR(settlement.totalCharges)}</span></div>
+            <div class="info-cell"><label>Advance Rent Adjusted (B1)</label><span class="bold text-success">${formatINR(settlement.advanceRentAdjusted)}</span></div>
+            <div class="info-cell"><label>Security Deposit Adjusted (B2)</label><span class="bold text-success">${formatINR(settlement.securityDepositAdjusted)}</span></div>
+            <div class="info-cell"><label>Total Deductions (B1 + B2)</label><span class="bold text-success">${formatINR((settlement.advanceRentAdjusted || 0) + (settlement.securityDepositAdjusted || 0))}</span></div>
+          </div>
+
+          <div class="settlement-net-box">
+            <div>
+              <div class="net-badge-title">${netStatusBadge}</div>
+              <div style="font-size: 8.5px; color: #6B7280; margin-top: 2px;">
+                ${isRefundable ? 'Refundable to tenant after all utility and rent deductions' : isPayable ? 'Balance amount tenant is required to pay' : 'All accounts settled to zero'}
+              </div>
+            </div>
+            <div class="net-amount">₹${netAmountFormatted}</div>
+          </div>
+        </div>
+
+        ${settlement.notes ? `
+        <div style="background: #F3F4F6; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px;">
+          <div style="font-size: 8.5px; font-weight: 700; color: #4B5563; text-transform: uppercase;">Settlement Remarks</div>
+          <div style="font-size: 9.5px; color: #1F2937; margin-top: 2px;">${settlement.notes}</div>
+        </div>` : ''}
+
+        <!-- Signatures & Authentication -->
+        <div style="display: flex; justify-content: space-between; margin-top: 18px;">
+          <div style="width: 45%;">
+            ${localSignatureBase64 ? `<img src="${localSignatureBase64}" style="height: 32px; max-width: 120px; object-fit: contain; margin-bottom: 4px;" />` : `<div style="height: 32px;"></div>`}
+            <div style="border-top: 1px solid #9CA3AF; padding-top: 3px; font-size: 8.5px; color: #4B5563;">
+              Authorized Signatory (${ownerName})
+            </div>
+          </div>
+          <div style="width: 45%; text-align: right;">
+            <div style="height: 32px;"></div>
+            <div style="border-top: 1px solid #9CA3AF; padding-top: 3px; font-size: 8.5px; color: #4B5563;">
+              Tenant Acknowledgment (${tenant.name})
+            </div>
+          </div>
+        </div>
+
+        <div class="footer-note">
+          Generated automatically by Rentora Landlord Mobile Platform • Immutable Record ID: ${settlement.id || settlement.settlementNumber}
+          <br>Report access granted under 30-Day Move-Out Settlement Policy. All financial records preserved permanently in Rentora Cloud.
+        </div>
+      </body>
+      </html>
+    `;
+
+    try {
+      const { uri } = await Print.printToFileAsync({ html: htmlContent });
+      const safeTenant = sanitizeForFilename(tenant.name || 'Tenant');
+      const filename = `Rentora_HistoricalReport_${safeTenant}_${tenant.id || 'id'}.pdf`;
+      const baseDir = (FileSystem.documentDirectory || FileSystem.cacheDirectory || '').replace(/\/?$/, '/');
+      const targetUri = `${baseDir}${filename}`;
+
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(targetUri);
+        if (fileInfo.exists) {
+          await FileSystem.deleteAsync(targetUri, { idempotent: true });
+        }
+        await FileSystem.copyAsync({
+          from: uri,
+          to: targetUri,
+        });
+        return targetUri;
+      } catch (fileErr) {
+        console.warn('Could not copy historical PDF with custom filename, returning original uri:', fileErr);
+        return uri;
+      }
+    } catch (e) {
+      console.error('Tenant Historical PDF Generation Error', e);
+      throw new Error('Could not generate Tenant Historical PDF. Please check printer configuration.');
+    }
   }
 };
 export default pdfService;
