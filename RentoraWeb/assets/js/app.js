@@ -388,6 +388,7 @@
         tenants: 'Tenants',
         bills: 'Bills & Payments',
         settlements: 'Settlements',
+        reports: 'Reports',
         settings: 'Settings'
       };
       activeTabLabel.textContent = titles[tabName] || tabName;
@@ -404,6 +405,9 @@
 
     if (tabName === 'settings' && typeof populateSettingsForm === 'function') {
       populateSettingsForm();
+    }
+    if (tabName === 'reports' && typeof renderReportsPanel === 'function') {
+      renderReportsPanel();
     }
   };
 
@@ -2343,6 +2347,9 @@
     if (state.dashboardTab === 'settings' && typeof populateSettingsForm === 'function') {
       populateSettingsForm();
     }
+    // Expose live state to tenant-report.js via a state getter bridge
+    window.__rentoraStateGetter = () => state;
+    window.__rentoraState = state;
   }
 
   function renderStats() {

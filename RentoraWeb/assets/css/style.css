@@ -2767,6 +2767,30 @@ textarea {
   color: #10B981;
 }
 
+/* ==========================================================================
+   TENANT-WISE HISTORICAL REPORT PANEL
+   ========================================================================== */
+
+.rpt-tenant-row {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-elevated);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.rpt-tenant-row:hover {
+  border-color: var(--primary);
+  background: var(--bg-card-hover);
+}
+
+.rpt-tenant-row--selected {
+  border-color: var(--primary) !important;
+  background: rgba(79, 70, 229, 0.08) !important;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+}
+
 /* Demo Mode button — allow text to wrap on narrow mobile screens.
    .btn sets white-space: nowrap globally; this override lets long labels
    break to multiple lines while keeping width: 100% (set inline) and
