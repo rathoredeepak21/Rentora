@@ -1111,6 +1111,12 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  position: sticky;
+  top: var(--header-height);
+  height: calc(100vh - var(--header-height));
+  height: calc(100dvh - var(--header-height));
+  overflow-y: auto;
+  align-self: start;
 }
 
 /* Portal Mobile Navigation Bar & Drawer */
