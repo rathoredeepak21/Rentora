@@ -129,7 +129,13 @@ export default function BillDetailsScreen() {
       setProperty(prop);
       setUnit(u);
       
-      const billPayments = allPayments.filter(p => p.billId === id);
+      const billPayments = allPayments.filter(p => {
+        if (p.isSplitChild) return p.billId === id;
+        if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+          return p.allocations.some(a => a.billId === id && Number(a.amount) > 0);
+        }
+        return p.billId === id;
+      });
       billPayments.sort((a, b) => ((b && b.paymentDate) || '').localeCompare((a && a.paymentDate) || ''));
       setPayments(billPayments);
     } catch (e) {
@@ -622,6 +628,8 @@ _Generated via Rentora App._`;
             <Text style={styles.sectionTitle}>Transaction Payments History</Text>
             {payments.map((payment) => {
               const status = payment.status || 'approved';
+              const billAllocatedAmount = paymentService.getPaymentAmountForBill(payment, id!) || Number(payment.amount) || 0;
+              const isPartialAllocation = Array.isArray(payment.allocations) && payment.allocations.length > 0 && Number(payment.amount) > billAllocatedAmount;
               return (
                 <View key={payment.id} style={styles.paymentRecord}>
                   <View style={styles.paymentHeader}>
@@ -643,11 +651,18 @@ _Generated via Rentora App._`;
                   </View>
                   <View style={styles.paymentFooter}>
                     <Text style={styles.paymentTxn}>Txn: {payment.transactionId || 'N/A'}</Text>
-                    <MoneyText
-                      amount={payment.amount}
-                      variant={status === 'rejected' ? 'normal' : 'success'}
-                      style={status === 'rejected' ? { ...styles.paymentAmount, textDecorationLine: 'line-through', color: colors.textSecondary } : styles.paymentAmount}
-                    />
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <MoneyText
+                        amount={billAllocatedAmount}
+                        variant={status === 'rejected' ? 'normal' : 'success'}
+                        style={status === 'rejected' ? { ...styles.paymentAmount, textDecorationLine: 'line-through', color: colors.textSecondary } : styles.paymentAmount}
+                      />
+                      {isPartialAllocation && (
+                        <Text style={{ fontSize: 10, color: colors.textSecondary }}>
+                          from ₹{Number(payment.amount).toLocaleString('en-IN')} payment
+                        </Text>
+                      )}
+                    </View>
                   </View>
                   {payment.screenshotUrl && (
                     <View style={styles.screenshotLinkContainer}>

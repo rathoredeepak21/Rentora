@@ -168,29 +168,41 @@ export interface Bill {
 export type PaymentMethod = 'cash' | 'upi' | 'bank_transfer' | 'other';
 export type PaymentVerificationStatus = 'pending' | 'approved' | 'rejected';
 
+export interface PaymentAllocation {
+  billId: string;
+  billNumber?: string;
+  billingMonth?: string;
+  amount: number;
+  type: 'bill_due' | 'advance';
+  allocatedAt?: string;
+}
+
 export interface Payment {
   id?: string;
   ownerId: string;
-  billId: string;
+  billId: string; // Primary or legacy bill ID, or 'multiple'
   tenantId: string;
   tenantAuthUid?: string | null;
   propertyId?: string;
   unitId?: string;
   
-  amount: number;
-  amountPaid?: number;
-  paymentDate: string; // Format: "YYYY-MM-DD"
+  amount: number; // Actual monetary amount received from the tenant
+  amountPaid?: number; // Backwards-compatible alias
+  paymentDate: string; // Format: "YYYY-MM-DD" - Real date money was received
   paymentMethod: PaymentMethod;
   transactionId?: string;
   screenshotUrl?: string;
   
-  // Payment Verification Fields
+  // Payment Verification & Allocation Fields
   status?: PaymentVerificationStatus;
   submittedAt?: string;
   verifiedAt?: string;
   rejectedAt?: string;
   rejectionReason?: string;
-  parentPaymentId?: string;
+  parentPaymentId?: string; // Canonical transaction ref
+  
+  allocations?: PaymentAllocation[]; // Breakdown of how this single transaction was distributed across bills
+  isSplitChild?: boolean; // Set to true only for legacy child records created by older split logic
   
   createdAt: string;
 }

@@ -10,6 +10,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import db from '../../utils/db';
 import { Property, Unit, Tenant, Bill, Payment } from '../../types';
 import { decorateBills, calculateOverallPending } from '../../services/billService';
+import { paymentService } from '../../services/paymentService';
 import { notificationService } from '../../services/notificationService';
 import SwipeableTabWrapper from '../../components/ui/SwipeableTabWrapper';
 
@@ -137,7 +138,8 @@ export default function DashboardScreen() {
 
   // Lists filtering
   const pendingBills = bills.filter(b => b && (b.remainingAmount > 0 || b.paymentStatus === 'unpaid' || b.paymentStatus === 'partial')).slice(0, 5);
-  const recentPayments = [...payments].sort((a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || '')).slice(0, 5);
+  const canonicalPayments = paymentService.filterCanonicalPayments(payments);
+  const recentPayments = [...canonicalPayments].sort((a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || '')).slice(0, 5);
   const pendingPaymentsCount = payments.filter(p => p && p.status === 'pending').length;
 
   return (

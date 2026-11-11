@@ -374,18 +374,25 @@ export const billService = {
   },
 
   async deleteBill(id: string): Promise<void> {
-    // 1. Fetch payments associated with this bill
-    const billPayments = await db.queryDocs<Payment>('payments', (doc) => doc.billId === id);
-    
-    // 2. Delete the associated payments and clean up screenshots
-    for (const payment of billPayments) {
-      if (payment.screenshotUrl) {
-        await localStorageService.deleteFile(payment.screenshotUrl);
+    // 1. Fetch all payments to unlink allocations or clean up single-bill payments
+    const allPayments = await db.getDocs<Payment>('payments');
+    for (const payment of allPayments) {
+      if (Array.isArray(payment.allocations) && payment.allocations.some((a) => a.billId === id)) {
+        // Multi-bill or modern allocated payment: remove the allocation for this deleted bill
+        const remainingAllocations = payment.allocations.filter((a) => a.billId !== id);
+        await db.updateDoc<Payment>('payments', payment.id!, {
+          allocations: remainingAllocations,
+        } as any);
+      } else if (payment.billId === id && (!payment.allocations || payment.allocations.length === 0)) {
+        // Legacy standalone payment strictly for this bill only
+        if (payment.screenshotUrl) {
+          await localStorageService.deleteFile(payment.screenshotUrl);
+        }
+        await db.deleteDoc('payments', payment.id!);
       }
-      await db.deleteDoc('payments', payment.id!);
     }
 
-    // 3. Delete the bill document
+    // 2. Delete the bill document
     await db.deleteDoc(COLLECTION, id);
   },
 

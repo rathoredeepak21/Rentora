@@ -12,6 +12,7 @@ import AppButton from '../../components/ui/AppButton';
 import db from '../../utils/db';
 import { Bill, Payment, Unit, Tenant } from '../../types';
 import { decorateBills } from '../../services/billService';
+import { paymentService } from '../../services/paymentService';
 import { tenantAuthService } from '../../services/tenantAuthService';
 import { tenantService } from '../../services/tenantService';
 
@@ -135,7 +136,8 @@ export default function TenantDetailsScreen() {
       ]);
       const rawTenantBills = allBills.filter((b) => b.tenantId === id);
       const tenantBills = decorateBills(rawTenantBills);
-      const tenantPayments = allPayments.filter((p) => p.tenantId === id);
+      const rawTenantPayments = allPayments.filter((p) => p.tenantId === id);
+      const tenantPayments = paymentService.filterCanonicalPayments(rawTenantPayments);
       // Sort bills by month desc safely
       tenantBills.sort((a, b) => ((b && b.billingMonth) || '').localeCompare((a && a.billingMonth) || ''));
       setBills(tenantBills);
@@ -630,8 +632,25 @@ export default function TenantDetailsScreen() {
                   </View>
                   <View style={styles.historyFooter}>
                     <Text style={styles.historySub}>Txn ID: {payment.transactionId || 'N/A'}</Text>
-                    <MoneyText amount={payment.amount} variant="success" />
+                    <MoneyText amount={Number(payment.amount) || Number(payment.amountPaid) || 0} variant="success" />
                   </View>
+                  {Array.isArray(payment.allocations) && payment.allocations.length > 0 && (
+                    <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border + '30', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {payment.allocations.map((alloc, aIdx) => {
+                        const b = bills.find((tb) => tb.id === alloc.billId);
+                        const label = alloc.type === 'advance'
+                          ? `Advance: ₹${Number(alloc.amount).toLocaleString('en-IN')}`
+                          : `${b ? (b.billingMonth || b.billNumber) : alloc.billNumber || 'Bill'}: ₹${Number(alloc.amount).toLocaleString('en-IN')}`;
+                        return (
+                          <View key={aIdx} style={{ backgroundColor: colors.primary + '15', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '600' }}>
+                              {label}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
                   {payment.screenshotUrl && (
                     <View style={styles.screenshotLinkContainer}>
                       <Ionicons name="document-attach-outline" size={14} color={colors.primary} />

@@ -180,11 +180,11 @@ export const pdfService = {
     approvedPayments.sort((a, b) => (a.paymentDate || '').localeCompare(b.paymentDate || ''));
 
     // 3. Group approved payments dynamically by payment month
-    const paymentsByMonth = new Map<string, { monthKey: string; monthLabel: string; totalReceived: number; payments: Payment[] }>();
+    const paymentsByMonth = new Map<string, { monthKey: string; monthLabel: string; totalReceived: number; payments: { payment: Payment; allocatedToBill: number }[] }>();
     approvedPayments.forEach(p => {
       const { monthKey, monthLabel } = formatPaymentMonthYear(p.paymentDate);
-      const amt = Number(p.amount) || Number(p.amountPaid) || 0;
-      if (!monthKey) return;
+      const amt = paymentService.getPaymentAmountForBill(p, bill.id!) || Number(p.amount) || Number(p.amountPaid) || 0;
+      if (!monthKey || amt <= 0) return;
       if (!paymentsByMonth.has(monthKey)) {
         paymentsByMonth.set(monthKey, {
           monthKey,
@@ -195,7 +195,7 @@ export const pdfService = {
       }
       const group = paymentsByMonth.get(monthKey)!;
       group.totalReceived += amt;
-      group.payments.push(p);
+      group.payments.push({ payment: p, allocatedToBill: amt });
     });
     const monthGroups = Array.from(paymentsByMonth.values());
 
@@ -212,8 +212,11 @@ export const pdfService = {
     const hasPrevDue = previousDue > 0;
     const totalPayable = Number(bill.totalAmount) || (currentBillTotal + previousDue);
 
-    // Sum of approved payments (fallback to bill.paidAmount if individual payment documents are not present)
-    const approvedSum = approvedPayments.reduce((sum, p) => sum + (Number(p.amount) || Number(p.amountPaid) || 0), 0);
+    // Sum of approved payments allocated to this bill (fallback to bill.paidAmount if individual payment documents are not present)
+    const approvedSum = approvedPayments.reduce((sum, p) => {
+      const amt = paymentService.getPaymentAmountForBill(p, bill.id!) || Number(p.amount) || Number(p.amountPaid) || 0;
+      return sum + amt;
+    }, 0);
     const totalReceived = approvedSum > 0 ? approvedSum : Math.max(0, Number(bill.paidAmount) || 0);
 
     // Oldest-outstanding-first allocation between previous dues and current bill
@@ -878,14 +881,17 @@ export const pdfService = {
                   <div style="font-weight: 800; font-size: 10.5px; color: #111827;">
                     Payment Received in ${group.monthLabel}: <span style="color: #059669; font-weight: 800;">₹ ${group.totalReceived.toLocaleString('en-IN')}</span>
                   </div>
-                  ${group.payments.map(p => {
-                    const pAmt = (Number(p.amount) || Number(p.amountPaid) || 0).toLocaleString('en-IN');
+                  ${group.payments.map(({ payment: p, allocatedToBill }) => {
+                    const pAmt = allocatedToBill.toLocaleString('en-IN');
                     const pMethod = (p.paymentMethod || 'Payment').toUpperCase();
                     const pDate = p.paymentDate ? formatShortBillDate(p.paymentDate) : 'N/A';
                     const txn = p.transactionId ? ` (Txn: ${p.transactionId})` : '';
+                    const totalNote = (Number(p.amount) || 0) > allocatedToBill
+                      ? ` [₹${allocatedToBill} of total ₹${(Number(p.amount) || 0).toLocaleString('en-IN')}]`
+                      : '';
                     return `
                       <div style="font-size: 9.5px; color: #4b5563; padding-left: 10px; margin-top: 1px;">
-                        • ${pDate} — ${pMethod}${txn}: <span style="font-weight: 700; color: #111827;">₹ ${pAmt}</span>
+                        • ${pDate} — ${pMethod}${txn}${totalNote}: <span style="font-weight: 700; color: #111827;">₹ ${pAmt}</span>
                       </div>
                     `;
                   }).join('')}
@@ -1429,8 +1435,9 @@ export const pdfService = {
       .filter((b) => b.tenantId === tenant.id)
       .sort((a, b) => (a.createdAt || a.dueDate || '').localeCompare(b.createdAt || b.dueDate || ''));
 
-    const tenantPayments = [...payments]
-      .filter((p) => p.tenantId === tenant.id)
+    const rawTenantPayments = [...payments].filter((p) => p.tenantId === tenant.id);
+    const tenantPayments = paymentService
+      .filterCanonicalPayments(rawTenantPayments)
       .sort((a, b) => (a.paymentDate || a.createdAt || '').localeCompare(b.paymentDate || b.createdAt || ''));
 
     const totalBilled = tenantBills.reduce((acc, b) => acc + (Number(b.totalAmount) || 0), 0);
@@ -1522,8 +1529,19 @@ export const pdfService = {
       ? `<tr><td colspan="7" style="text-align: center; color: #6B7280; padding: 12px;">No payment transactions recorded for this tenant</td></tr>`
       : tenantPayments
           .map((p, idx) => {
-            const associatedBill = tenantBills.find((b) => b.id === p.billId);
-            const billDisplay = associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment';
+            let billDisplay = '—';
+            if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+              billDisplay = p.allocations
+                .map((a) => {
+                  if (a.type === 'advance') return `Advance (₹${a.amount})`;
+                  const b = tenantBills.find((tb) => tb.id === a.billId);
+                  return `${b ? b.billNumber : billNumberMap[a.billId] || a.billId} (₹${a.amount})`;
+                })
+                .join(', ');
+            } else {
+              const associatedBill = tenantBills.find((b) => b.id === p.billId);
+              billDisplay = associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment';
+            }
             const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
             return `
             <tr>

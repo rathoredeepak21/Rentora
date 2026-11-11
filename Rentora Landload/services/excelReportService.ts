@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
 import { decorateBills, calculateOverallPending } from './billService';
+import { paymentService } from './paymentService';
 
 export const excelReportService = {
   async generateReport(ownerId: string, propertyId: string, monthStr: string, monthLabel: string): Promise<string> {
@@ -12,7 +13,7 @@ export const excelReportService = {
     const units = await db.getDocs<Unit>('units');
     const tenants = await db.getDocs<Tenant>('tenants');
     const rawBills = await db.getDocs<Bill>('bills');
-    const payments = await db.getDocs<Payment>('payments');
+    const rawPayments = await db.getDocs<Payment>('payments');
 
     // Group rawBills by tenantId to decorate them chronologically
     const billsByTenant: Record<string, Bill[]> = {};
@@ -56,11 +57,28 @@ export const excelReportService = {
       return moveIn <= endOfMonth && (t.status === 'active' || !moveOut || moveOut >= startOfMonth);
     });
 
-    // 6. Filter payments
-    const filteredPayments = payments.filter(p => {
-      const bill = bills.find(b => b.id === p.billId);
-      if (!bill) return false;
-      return p.paymentDate.startsWith(monthStr) && propIds.includes(bill.propertyId);
+    // 6. Filter canonical payments: money received in this calendar month!
+    const canonicalPayments = paymentService.filterCanonicalPayments(rawPayments);
+    const filteredPayments = canonicalPayments.filter(p => {
+      if (p.status === 'rejected' || p.status === 'pending') return false;
+      if (!p.paymentDate || !p.paymentDate.startsWith(monthStr)) return false;
+
+      // Determine property ID
+      let pPropId = p.propertyId;
+      if (!pPropId && p.billId && p.billId !== 'advance') {
+        pPropId = bills.find(b => b.id === p.billId)?.propertyId;
+      }
+      if (!pPropId && Array.isArray(p.allocations) && p.allocations.length > 0) {
+        const firstBillAlloc = p.allocations.find(a => a.billId !== 'advance');
+        if (firstBillAlloc) {
+          pPropId = bills.find(b => b.id === firstBillAlloc.billId)?.propertyId;
+        }
+      }
+      if (!pPropId && p.tenantId) {
+        pPropId = tenants.find(t => t.id === p.tenantId)?.propertyId;
+      }
+
+      return pPropId ? propIds.includes(pPropId) : false;
     });
 
     // Helper functions for cell types
@@ -82,10 +100,42 @@ export const excelReportService = {
 
     // Proportional Payment Allocation Helper
     const allocatePayment = (payment: Payment) => {
+      if (Array.isArray(payment.allocations) && payment.allocations.length > 0) {
+        const result = {
+          rent: 0,
+          electricity: 0,
+          water: 0,
+          parking: 0,
+          maintenance: 0,
+          other: 0,
+          previousDue: 0
+        };
+        for (const alloc of payment.allocations) {
+          if (alloc.type === 'advance') {
+            result.rent += Number(alloc.amount) || 0;
+            continue;
+          }
+          const bill = bills.find(b => b.id === alloc.billId);
+          if (!bill || !bill.totalAmount) {
+            result.rent += Number(alloc.amount) || 0;
+            continue;
+          }
+          const ratio = (Number(alloc.amount) || 0) / (bill.totalAmount || 1);
+          result.rent += (bill.rent || 0) * ratio;
+          result.electricity += (bill.electricityCharge || 0) * ratio;
+          result.water += (bill.waterCharge || 0) * ratio;
+          result.parking += (bill.parkingCharge || 0) * ratio;
+          result.maintenance += (bill.maintenanceCharge || 0) * ratio;
+          result.other += (bill.otherCharges || 0) * ratio;
+          result.previousDue += (bill.previousDue || 0) * ratio;
+        }
+        return result;
+      }
+
       const bill = bills.find(b => b.id === payment.billId);
       if (!bill) {
         return {
-          rent: payment.amount,
+          rent: Number(payment.amount) || 0,
           electricity: 0,
           water: 0,
           parking: 0,
@@ -94,7 +144,7 @@ export const excelReportService = {
           previousDue: 0
         };
       }
-      const ratio = bill.totalAmount > 0 ? (payment.amount / bill.totalAmount) : 0;
+      const ratio = bill.totalAmount > 0 ? ((Number(payment.amount) || 0) / bill.totalAmount) : 0;
       return {
         rent: (bill.rent || 0) * ratio,
         electricity: (bill.electricityCharge || 0) * ratio,
@@ -253,9 +303,24 @@ export const excelReportService = {
     ];
     filteredPayments.forEach(p => {
       const tenantName = tenants.find(t => t.id === p.tenantId)?.name || 'Tenant';
-      const bill = bills.find(b => b.id === p.billId);
-      const billNo = bill ? bill.billNumber : '-';
-      const billStatus = bill ? bill.paymentStatus.toUpperCase() : '-';
+      let billNo = '-';
+      let billStatus = (p.status || 'approved').toUpperCase();
+
+      if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+        billNo = p.allocations
+          .map(a => {
+            if (a.type === 'advance') return `Advance (₹${a.amount})`;
+            const b = bills.find(tb => tb.id === a.billId);
+            return `${b ? b.billNumber : a.billId} (₹${a.amount})`;
+          })
+          .join(', ');
+      } else {
+        const bill = bills.find(b => b.id === p.billId);
+        billNo = bill ? bill.billNumber : (p.billId === 'advance' ? 'Advance Payment' : '-');
+        if (bill) {
+          billStatus = bill.paymentStatus.toUpperCase();
+        }
+      }
       
       let pMethod = p.paymentMethod as string;
       if (pMethod === 'bank_transfer') pMethod = 'Bank Transfer';
@@ -267,7 +332,7 @@ export const excelReportService = {
         dateCell(p.paymentDate),
         strCell(tenantName),
         strCell(billNo),
-        currencyCell(p.amount || 0),
+        currencyCell(Number(p.amount) || Number(p.amountPaid) || 0),
         strCell(pMethod),
         strCell(p.transactionId || ''),
         strCell(billStatus)
@@ -711,9 +776,10 @@ export const excelReportService = {
       .filter((b) => b.tenantId === tenant.id)
       .sort((a, b) => (a.createdAt || a.dueDate || '').localeCompare(b.createdAt || b.dueDate || ''));
 
-    // Filter and sort payments strictly for this tenant
-    const tenantPayments = [...payments]
-      .filter((p) => p.tenantId === tenant.id)
+    // Filter and sort canonical payments strictly for this tenant
+    const rawTenantPayments = [...payments].filter((p) => p.tenantId === tenant.id);
+    const tenantPayments = paymentService
+      .filterCanonicalPayments(rawTenantPayments)
       .sort((a, b) => (a.paymentDate || a.createdAt || '').localeCompare(b.paymentDate || b.createdAt || ''));
 
     const totalBilled = tenantBills.reduce((acc, b) => acc + (Number(b.totalAmount) || 0), 0);
@@ -902,14 +968,30 @@ export const excelReportService = {
       'Payment Amount (₹)',
       'Payment Mode',
       'Transaction / Ref ID',
-      'Associated Bill Number',
+      'Bill Allocation / Details',
       'Verification Status',
       'Bill Month Ref',
     ];
 
     const s3Rows: any[][] = [s3Headers];
     tenantPayments.forEach((p, idx) => {
-      const associatedBill = tenantBills.find((b) => b.id === p.billId);
+      let allocationSummary = '—';
+      if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+        allocationSummary = p.allocations
+          .map((a) => {
+            if (a.type === 'advance') return `Advance (₹${a.amount})`;
+            const b = tenantBills.find((tb) => tb.id === a.billId);
+            return `${b ? b.billNumber : billNumberMap[a.billId] || a.billId} (₹${a.amount})`;
+          })
+          .join(', ');
+      } else {
+        const associatedBill = tenantBills.find((b) => b.id === p.billId);
+        allocationSummary = associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment';
+      }
+
+      const firstAlloc = Array.isArray(p.allocations) && p.allocations.length > 0 ? p.allocations[0] : null;
+      const associatedBill = tenantBills.find((b) => b.id === p.billId) ||
+        (firstAlloc ? tenantBills.find((b) => b.id === firstAlloc.billId) : null);
       const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
       s3Rows.push([
         idx + 1,
@@ -918,7 +1000,7 @@ export const excelReportService = {
         Number(p.amount) || Number(p.amountPaid) || 0,
         (p.paymentMethod || 'cash').toUpperCase(),
         p.transactionId || '—',
-        associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment',
+        allocationSummary,
         (p.status || 'approved').toUpperCase(),
         associatedBill?.billingMonth || '—',
       ]);

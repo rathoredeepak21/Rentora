@@ -1,17 +1,88 @@
 import db from '../utils/db';
-import { Payment, Bill, Tenant, PaymentVerificationStatus } from '../types';
+import { Payment, Bill, Tenant, PaymentVerificationStatus, PaymentAllocation } from '../types';
 import { billService, decorateBills, isBillClosedOrPaid, sortBillsChronological } from './billService';
 import { notificationService } from './notificationService';
 
 const COLLECTION = 'payments';
 
 export const paymentService = {
-  async getPaymentsForTenant(tenantId: string): Promise<Payment[]> {
-    return db.queryDocs<Payment>(COLLECTION, (doc) => doc.tenantId === tenantId);
+  /**
+   * Filters out legacy split child records so that multi-bill split payments from older app versions
+   * are never double-counted as separate transactions, while preserving full allocation data.
+   */
+  filterCanonicalPayments(payments: Payment[]): Payment[] {
+    if (!Array.isArray(payments)) return [];
+    
+    // 1. If explicit isSplitChild is set to true, filter it out
+    const withoutExplicitChild = payments.filter((p) => !p.isSplitChild);
+
+    // 2. For legacy records that have parentPaymentId where multiple docs share that parentPaymentId,
+    //    if docs don't have explicit allocations, merge them into 1 canonical payment transaction.
+    const seenParentIds = new Set<string>();
+    const result: Payment[] = [];
+
+    for (const p of withoutExplicitChild) {
+      if (p.allocations && p.allocations.length > 0) {
+        result.push(p);
+      } else if (p.parentPaymentId && withoutExplicitChild.filter((x) => x.parentPaymentId === p.parentPaymentId).length > 1) {
+        if (!seenParentIds.has(p.parentPaymentId)) {
+          seenParentIds.add(p.parentPaymentId);
+          // Combine legacy split parts into 1 unified transaction
+          const siblings = withoutExplicitChild.filter((x) => x.parentPaymentId === p.parentPaymentId);
+          const totalAmount = siblings.reduce((sum, s) => sum + (Number(s.amount) || Number(s.amountPaid) || 0), 0);
+          const combinedAllocations: PaymentAllocation[] = siblings.map((s) => ({
+            billId: s.billId,
+            amount: Number(s.amount) || Number(s.amountPaid) || 0,
+            type: s.billId === 'advance' ? ('advance' as const) : ('bill_due' as const),
+          }));
+          result.push({
+            ...p,
+            amount: totalAmount,
+            amountPaid: totalAmount,
+            allocations: combinedAllocations,
+          });
+        }
+      } else {
+        result.push(p);
+      }
+    }
+
+    return result;
   },
 
+  /**
+   * Returns all canonical payment transactions for a given tenant.
+   */
+  async getPaymentsForTenant(tenantId: string): Promise<Payment[]> {
+    const raw = await db.queryDocs<Payment>(COLLECTION, (doc) => doc.tenantId === tenantId);
+    return paymentService.filterCanonicalPayments(raw);
+  },
+
+  /**
+   * Returns all payments that apply to a specific bill (either directly or via allocations).
+   */
   async getPaymentsForBill(billId: string): Promise<Payment[]> {
-    return db.queryDocs<Payment>(COLLECTION, (doc) => doc.billId === billId);
+    const all = await db.getDocs<Payment>(COLLECTION);
+    return all.filter((doc) => {
+      if (doc.isSplitChild) {
+        return doc.billId === billId;
+      }
+      if (Array.isArray(doc.allocations) && doc.allocations.length > 0) {
+        return doc.allocations.some((a) => a.billId === billId && Number(a.amount) > 0);
+      }
+      return doc.billId === billId;
+    });
+  },
+
+  /**
+   * Extracts the amount allocated to a specific bill from a payment transaction.
+   */
+  getPaymentAmountForBill(payment: Payment, billId: string): number {
+    if (Array.isArray(payment.allocations) && payment.allocations.length > 0) {
+      const alloc = payment.allocations.find((a) => a.billId === billId);
+      return alloc ? Number(alloc.amount) || 0 : 0;
+    }
+    return payment.billId === billId ? (Number(payment.amount) || Number(payment.amountPaid) || 0) : 0;
   },
 
   async getPendingPayments(ownerId: string): Promise<Payment[]> {
@@ -67,7 +138,8 @@ export const paymentService = {
 
   /**
    * Landlord approves a pending payment submission.
-   * Runs the exact Rentora sequential bill payment allocation logic.
+   * Runs the exact Rentora sequential bill payment allocation logic,
+   * stores allocations on the single payment document, and updates status to approved.
    */
   async approvePayment(paymentId: string): Promise<Payment> {
     const payment = await db.getDoc<Payment>(COLLECTION, paymentId);
@@ -97,6 +169,7 @@ export const paymentService = {
     );
 
     let remainingPayment = Number(payment.amount) || 0;
+    const allocations: PaymentAllocation[] = [];
 
     // 3. Apply payment sequentially to oldest outstanding bills first
     for (const bill of outstandingBills) {
@@ -113,6 +186,15 @@ export const paymentService = {
         paidAmount: newPaidAmount,
       });
 
+      allocations.push({
+        billId: bill.id!,
+        billNumber: bill.billNumber,
+        billingMonth: bill.billingMonth,
+        amount: allocatedAmount,
+        type: 'bill_due',
+        allocatedAt: nowIso,
+      });
+
       remainingPayment -= allocatedAmount;
     }
 
@@ -124,13 +206,21 @@ export const paymentService = {
       await db.updateDoc<Tenant>('tenants', tenant.id!, {
         advanceAmount: newAdvance,
       } as any);
+
+      allocations.push({
+        billId: 'advance',
+        amount: remainingPayment,
+        type: 'advance',
+        allocatedAt: nowIso,
+      });
     }
 
-    // 5. Update the payment document status to approved
+    // 5. Update the payment document status to approved with allocations on the SAME document
     const updatedPayment = await db.updateDoc<Payment>(COLLECTION, paymentId, {
       status: 'approved' as PaymentVerificationStatus,
       verifiedAt: nowIso,
       parentPaymentId,
+      allocations,
     });
 
     // 6. Sync updated decorated states to bills in Firestore
@@ -149,7 +239,7 @@ export const paymentService = {
       });
     }
 
-    // 6. Dispatch notification to tenant (in-app + Android status-bar push)
+    // 7. Dispatch notification to tenant (in-app + Android status-bar push)
     try {
       const formattedAmount = Number(payment.amount || 0).toLocaleString('en-IN');
       const tenantTitle = 'Payment Approved';
@@ -280,7 +370,9 @@ export const paymentService = {
 
   /**
    * Landlord records a payment directly in the Landlord App.
-   * Automatically sets status to 'approved' and executes immediate allocation.
+   * Stores EXACTLY ONE permanent transaction record representing actual money received.
+   * Allocates to oldest outstanding bills first, then next bills, then advance.
+   * Stores allocations breakdown on the single transaction.
    */
   async recordPayment(payment: Omit<Payment, 'createdAt'>): Promise<Payment> {
     // 1. Fetch the tenant
@@ -289,7 +381,9 @@ export const paymentService = {
       throw new Error('Tenant not found');
     }
 
-    const parentPaymentId = 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const parentPaymentId = payment.transactionId && payment.transactionId.startsWith('PAY-')
+      ? payment.transactionId
+      : 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
     const nowIso = new Date().toISOString();
 
     // 2. Fetch all bills of this tenant
@@ -302,7 +396,7 @@ export const paymentService = {
     );
 
     let remainingPayment = Number(payment.amount) || 0;
-    let mainPaymentRef: Payment | null = null;
+    const allocations: PaymentAllocation[] = [];
 
     // 3. Apply payment sequentially to oldest outstanding bills first
     for (const bill of outstandingBills) {
@@ -319,27 +413,14 @@ export const paymentService = {
         paidAmount: newPaidAmount,
       });
 
-      // Save split payment record
-      const splitDoc = await db.addDoc<Payment>(COLLECTION, {
-        ownerId: payment.ownerId,
+      allocations.push({
         billId: bill.id!,
-        tenantId: payment.tenantId,
-        tenantAuthUid: tenant.tenantAuthUid || null,
-        propertyId: bill.propertyId,
-        unitId: bill.unitId,
+        billNumber: bill.billNumber,
+        billingMonth: bill.billingMonth,
         amount: allocatedAmount,
-        paymentDate: payment.paymentDate,
-        paymentMethod: payment.paymentMethod,
-        transactionId: payment.transactionId,
-        screenshotUrl: payment.screenshotUrl,
-        status: 'approved' as PaymentVerificationStatus,
-        verifiedAt: nowIso,
-        parentPaymentId,
-      } as any);
-
-      if (!mainPaymentRef) {
-        mainPaymentRef = splitDoc;
-      }
+        type: 'bill_due',
+        allocatedAt: nowIso,
+      });
 
       remainingPayment -= allocatedAmount;
     }
@@ -353,38 +434,36 @@ export const paymentService = {
         advanceAmount: newAdvance,
       } as any);
 
-      const advancePaymentDoc = await db.addDoc<Payment>(COLLECTION, {
-        ownerId: payment.ownerId,
+      allocations.push({
         billId: 'advance',
-        tenantId: payment.tenantId,
-        tenantAuthUid: tenant.tenantAuthUid || null,
-        propertyId: tenant.propertyId,
-        unitId: tenant.unitId,
         amount: remainingPayment,
-        paymentDate: payment.paymentDate,
-        paymentMethod: payment.paymentMethod,
-        transactionId: payment.transactionId,
-        screenshotUrl: payment.screenshotUrl,
-        status: 'approved' as PaymentVerificationStatus,
-        verifiedAt: nowIso,
-        parentPaymentId,
-      } as any);
-
-      if (!mainPaymentRef) {
-        mainPaymentRef = advancePaymentDoc;
-      }
+        type: 'advance',
+        allocatedAt: nowIso,
+      });
     }
 
-    if (!mainPaymentRef) {
-      mainPaymentRef = await db.addDoc<Payment>(COLLECTION, {
-        ...payment,
-        status: 'approved' as PaymentVerificationStatus,
-        verifiedAt: nowIso,
-        parentPaymentId,
-      } as any);
-    }
+    // 5. Save EXACTLY ONE Master Payment Transaction Document
+    const singlePaymentDoc = await db.addDoc<Payment>(COLLECTION, {
+      ownerId: payment.ownerId,
+      billId: payment.billId || (allocations[0]?.billId) || 'direct',
+      tenantId: payment.tenantId,
+      tenantAuthUid: tenant.tenantAuthUid || null,
+      propertyId: payment.propertyId || tenant.propertyId,
+      unitId: payment.unitId || tenant.unitId,
+      amount: Number(payment.amount) || 0,
+      amountPaid: Number(payment.amount) || 0,
+      paymentDate: payment.paymentDate,
+      paymentMethod: payment.paymentMethod,
+      transactionId: payment.transactionId || parentPaymentId,
+      screenshotUrl: payment.screenshotUrl,
+      status: 'approved' as PaymentVerificationStatus,
+      verifiedAt: nowIso,
+      parentPaymentId,
+      allocations,
+      isSplitChild: false,
+    } as any);
 
-    // 5. Sync updated decorated states to bills in Firestore
+    // 6. Sync updated decorated states to bills in Firestore
     const updatedBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
     const redecorated = decorateBills(updatedBills);
     for (const b of redecorated) {
@@ -400,7 +479,7 @@ export const paymentService = {
       });
     }
 
-    return mainPaymentRef;
+    return singlePaymentDoc;
   },
 };
 export default paymentService;
