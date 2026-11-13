@@ -1533,14 +1533,16 @@ export const pdfService = {
             if (Array.isArray(p.allocations) && p.allocations.length > 0) {
               billDisplay = p.allocations
                 .map((a) => {
-                  if (a.type === 'advance') return `Advance (₹${a.amount})`;
+                  if (a.type === 'advance') return `Advance (₹${Number(a.amount).toLocaleString('en-IN')})`;
                   const b = tenantBills.find((tb) => tb.id === a.billId);
-                  return `${b ? b.billNumber : billNumberMap[a.billId] || a.billId} (₹${a.amount})`;
+                  const m = b?.billingMonth || a.billingMonth || '';
+                  const bNum = b ? b.billNumber : (a.billNumber || billNumberMap[a.billId] || a.billId);
+                  return m ? `${bNum} [${m}] (₹${Number(a.amount).toLocaleString('en-IN')})` : `${bNum} (₹${Number(a.amount).toLocaleString('en-IN')})`;
                 })
                 .join(', ');
             } else {
               const associatedBill = tenantBills.find((b) => b.id === p.billId);
-              billDisplay = associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment';
+              billDisplay = associatedBill ? `${associatedBill.billNumber} [${associatedBill.billingMonth}]` : (p.billId === 'advance' ? 'Advance Payment' : (billNumberMap[p.billId] || p.billId || 'Direct Payment'));
             }
             const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
             return `
@@ -1848,7 +1850,7 @@ export const pdfService = {
               <th class="text-right">Amount (₹)</th>
               <th>Payment Mode</th>
               <th>Transaction / Reference ID</th>
-              <th>Associated Bill</th>
+              <th>Bill Allocation Breakdown</th>
             </tr>
           </thead>
           <tbody>

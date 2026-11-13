@@ -206,6 +206,8 @@ export default function RecordPaymentScreen() {
         ownerId: bill.ownerId,
         billId: bill.id!,
         tenantId: bill.tenantId,
+        propertyId: bill.propertyId,
+        unitId: bill.unitId,
         amount: parseFloat(amount) || 0,
         paymentDate,
         paymentMethod,
@@ -261,6 +263,12 @@ export default function RecordPaymentScreen() {
             <Text style={styles.gridLabel}>Original Total Payable:</Text>
             <Text style={styles.gridValue}>₹{bill.totalAmount}</Text>
           </View>
+          {bill.previousDue > 0 && (
+            <View style={styles.gridRow}>
+              <Text style={[styles.gridLabel, { color: colors.danger }]}>Previous Arrears Included:</Text>
+              <Text style={[styles.gridValue, { color: colors.danger }]}>₹{bill.previousDue}</Text>
+            </View>
+          )}
         </View>
 
         {/* Transaction details card */}

@@ -630,10 +630,22 @@ _Generated via Rentora App._`;
               const status = payment.status || 'approved';
               const billAllocatedAmount = paymentService.getPaymentAmountForBill(payment, id!) || Number(payment.amount) || 0;
               const isPartialAllocation = Array.isArray(payment.allocations) && payment.allocations.length > 0 && Number(payment.amount) > billAllocatedAmount;
+              const pMonth = payment.paymentDate ? payment.paymentDate.slice(0, 7) : '';
+              const isDifferentMonth = pMonth && bill.billingMonth && pMonth !== bill.billingMonth;
+
               return (
                 <View key={payment.id} style={styles.paymentRecord}>
                   <View style={styles.paymentHeader}>
-                    <Text style={styles.paymentDate}>{payment.paymentDate}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.paymentDate}>{payment.paymentDate}</Text>
+                      {isDifferentMonth && (
+                        <View style={{ backgroundColor: colors.primary + '18', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3 }}>
+                          <Text style={{ fontSize: 9.5, fontWeight: '700', color: colors.primary }}>
+                            Adjusted from {pMonth} payment
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                       <View style={[
                         styles.paymentStatusBadge,
@@ -659,7 +671,7 @@ _Generated via Rentora App._`;
                       />
                       {isPartialAllocation && (
                         <Text style={{ fontSize: 10, color: colors.textSecondary }}>
-                          from ₹{Number(payment.amount).toLocaleString('en-IN')} payment
+                          adjusted from ₹{Number(payment.amount).toLocaleString('en-IN')} total payment
                         </Text>
                       )}
                     </View>

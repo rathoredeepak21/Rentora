@@ -62,11 +62,9 @@ export const paymentService = {
    * Returns all payments that apply to a specific bill (either directly or via allocations).
    */
   async getPaymentsForBill(billId: string): Promise<Payment[]> {
-    const all = await db.getDocs<Payment>(COLLECTION);
-    return all.filter((doc) => {
-      if (doc.isSplitChild) {
-        return doc.billId === billId;
-      }
+    const raw = await db.getDocs<Payment>(COLLECTION);
+    const canonical = paymentService.filterCanonicalPayments(raw);
+    return canonical.filter((doc) => {
       if (Array.isArray(doc.allocations) && doc.allocations.length > 0) {
         return doc.allocations.some((a) => a.billId === billId && Number(a.amount) > 0);
       }
@@ -170,12 +168,17 @@ export const paymentService = {
 
     let remainingPayment = Number(payment.amount) || 0;
     const allocations: PaymentAllocation[] = [];
+    const txnId = payment.transactionId || parentPaymentId;
+
+    const allBillsSorted = sortBillsChronological(allBills);
 
     // 3. Apply payment sequentially to oldest outstanding bills first
     for (const bill of outstandingBills) {
       if (remainingPayment <= 0) break;
 
-      const needed = Number(bill.remainingAmount) || 0;
+      const isFirstTenantBill = allBillsSorted.length > 0 && bill.id === allBillsSorted[0].id;
+      const capacity = isFirstTenantBill ? Number(bill.totalAmount || bill.subtotal) : Number(bill.subtotal);
+      const needed = Math.max(0, capacity - (Number(bill.paidAmount) || 0));
       if (needed <= 0) continue;
       const allocatedAmount = Math.min(remainingPayment, needed);
 
@@ -187,6 +190,8 @@ export const paymentService = {
       });
 
       allocations.push({
+        paymentId,
+        transactionId: txnId,
         billId: bill.id!,
         billNumber: bill.billNumber,
         billingMonth: bill.billingMonth,
@@ -208,6 +213,8 @@ export const paymentService = {
       } as any);
 
       allocations.push({
+        paymentId,
+        transactionId: txnId,
         billId: 'advance',
         amount: remainingPayment,
         type: 'advance',
@@ -220,6 +227,7 @@ export const paymentService = {
       status: 'approved' as PaymentVerificationStatus,
       verifiedAt: nowIso,
       parentPaymentId,
+      billId: allocations.length === 1 ? allocations[0].billId : (allocations.length > 1 ? 'multiple' : payment.billId),
       allocations,
     });
 
@@ -384,7 +392,11 @@ export const paymentService = {
     const parentPaymentId = payment.transactionId && payment.transactionId.startsWith('PAY-')
       ? payment.transactionId
       : 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+    const txnId = (payment.transactionId && payment.transactionId.trim()) ? payment.transactionId.trim() : parentPaymentId;
     const nowIso = new Date().toISOString();
+    const actualPaymentDate = (payment.paymentDate && payment.paymentDate.trim())
+      ? payment.paymentDate.trim()
+      : nowIso.split('T')[0];
 
     // 2. Fetch all bills of this tenant
     const allBills = await db.queryDocs<Bill>('bills', (doc) => doc.tenantId === payment.tenantId);
@@ -398,11 +410,15 @@ export const paymentService = {
     let remainingPayment = Number(payment.amount) || 0;
     const allocations: PaymentAllocation[] = [];
 
+    const allBillsSorted = sortBillsChronological(allBills);
+
     // 3. Apply payment sequentially to oldest outstanding bills first
     for (const bill of outstandingBills) {
       if (remainingPayment <= 0) break;
 
-      const needed = Number(bill.remainingAmount) || 0;
+      const isFirstTenantBill = allBillsSorted.length > 0 && bill.id === allBillsSorted[0].id;
+      const capacity = isFirstTenantBill ? Number(bill.totalAmount || bill.subtotal) : Number(bill.subtotal);
+      const needed = Math.max(0, capacity - (Number(bill.paidAmount) || 0));
       if (needed <= 0) continue;
       const allocatedAmount = Math.min(remainingPayment, needed);
 
@@ -414,6 +430,7 @@ export const paymentService = {
       });
 
       allocations.push({
+        transactionId: txnId,
         billId: bill.id!,
         billNumber: bill.billNumber,
         billingMonth: bill.billingMonth,
@@ -435,6 +452,7 @@ export const paymentService = {
       } as any);
 
       allocations.push({
+        transactionId: txnId,
         billId: 'advance',
         amount: remainingPayment,
         type: 'advance',
@@ -445,16 +463,16 @@ export const paymentService = {
     // 5. Save EXACTLY ONE Master Payment Transaction Document
     const singlePaymentDoc = await db.addDoc<Payment>(COLLECTION, {
       ownerId: payment.ownerId,
-      billId: payment.billId || (allocations[0]?.billId) || 'direct',
+      billId: allocations.length === 1 ? allocations[0].billId : (allocations.length > 1 ? 'multiple' : (payment.billId || 'direct')),
       tenantId: payment.tenantId,
       tenantAuthUid: tenant.tenantAuthUid || null,
       propertyId: payment.propertyId || tenant.propertyId,
       unitId: payment.unitId || tenant.unitId,
       amount: Number(payment.amount) || 0,
       amountPaid: Number(payment.amount) || 0,
-      paymentDate: payment.paymentDate,
+      paymentDate: actualPaymentDate,
       paymentMethod: payment.paymentMethod,
-      transactionId: payment.transactionId || parentPaymentId,
+      transactionId: txnId,
       screenshotUrl: payment.screenshotUrl,
       status: 'approved' as PaymentVerificationStatus,
       verifiedAt: nowIso,

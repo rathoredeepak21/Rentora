@@ -156,12 +156,34 @@ export const excelReportService = {
       };
     };
 
+    // Calculate collection categories from actual payments received in this month
+    let collRent = 0;
+    let collElec = 0;
+    let collWater = 0;
+    let collParking = 0;
+    let collMaint = 0;
+    let collOther = 0;
+    let collPrevDue = 0;
+
+    filteredPayments.forEach(p => {
+      const allocation = allocatePayment(p);
+      collRent += allocation.rent;
+      collElec += allocation.electricity;
+      collWater += allocation.water;
+      collParking += allocation.parking;
+      collMaint += allocation.maintenance;
+      collOther += allocation.other;
+      collPrevDue += allocation.previousDue;
+    });
+
+    const collTotal = collRent + collElec + collWater + collParking + collMaint + collOther + collPrevDue;
+
     // --- 1. Summary Sheet ---
     const expectedRent = filteredBills.reduce((sum, b) => sum + (b.rent || 0), 0);
-    const rentCollected = filteredBills.reduce((sum, b) => sum + (b.paidAmount * ((b.rent || 0) / (b.totalAmount || 1))), 0);
-    const rentOutstanding = filteredBills.reduce((sum, b) => sum + (b.remainingAmount * ((b.rent || 0) / (b.totalAmount || 1))), 0);
+    const rentCollected = collRent;
+    const rentOutstanding = Math.max(0, expectedRent - collRent);
 
-    const totalCollected = filteredPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    const totalCollected = filteredPayments.reduce((sum, p) => sum + (Number(p.amount) || Number(p.amountPaid) || 0), 0);
     const totalOutstanding = calculateOverallPending(filteredBills);
 
     const newTenantsCount = filteredTenants.filter(t => t.moveInDate && t.moveInDate.startsWith(monthStr)).length;
@@ -580,27 +602,6 @@ export const excelReportService = {
     const wsDateWise = XLSX.utils.aoa_to_sheet(dateWiseRows);
 
     // --- 12. Collection Summary Sheet ---
-    let collRent = 0;
-    let collElec = 0;
-    let collWater = 0;
-    let collParking = 0;
-    let collMaint = 0;
-    let collOther = 0;
-    let collPrevDue = 0;
-
-    filteredPayments.forEach(p => {
-      const allocation = allocatePayment(p);
-      collRent += allocation.rent;
-      collElec += allocation.electricity;
-      collWater += allocation.water;
-      collParking += allocation.parking;
-      collMaint += allocation.maintenance;
-      collOther += allocation.other;
-      collPrevDue += allocation.previousDue;
-    });
-
-    const collTotal = collRent + collElec + collWater + collParking + collMaint + collOther + collPrevDue;
-
     const collectionSummaryRows: any[][] = [
       [strCell('Category'), strCell('Amount Collected')],
       [strCell('Rent Collection'), currencyCell(collRent)],
@@ -970,28 +971,38 @@ export const excelReportService = {
       'Transaction / Ref ID',
       'Bill Allocation / Details',
       'Verification Status',
-      'Bill Month Ref',
+      'Allocated Bill(s) & Month(s)',
     ];
 
     const s3Rows: any[][] = [s3Headers];
     tenantPayments.forEach((p, idx) => {
       let allocationSummary = '—';
+      let allocatedMonths = '—';
+
       if (Array.isArray(p.allocations) && p.allocations.length > 0) {
         allocationSummary = p.allocations
           .map((a) => {
-            if (a.type === 'advance') return `Advance (₹${a.amount})`;
+            if (a.type === 'advance') return `Advance (₹${Number(a.amount).toLocaleString('en-IN')})`;
             const b = tenantBills.find((tb) => tb.id === a.billId);
-            return `${b ? b.billNumber : billNumberMap[a.billId] || a.billId} (₹${a.amount})`;
+            return `${b ? b.billNumber : billNumberMap[a.billId] || a.billId} (₹${Number(a.amount).toLocaleString('en-IN')})`;
+          })
+          .join(', ');
+
+        allocatedMonths = p.allocations
+          .map((a) => {
+            if (a.type === 'advance') return `Advance (₹${Number(a.amount).toLocaleString('en-IN')})`;
+            const b = tenantBills.find((tb) => tb.id === a.billId);
+            const m = b?.billingMonth || a.billingMonth || '';
+            const bNum = b ? b.billNumber : (a.billNumber || billNumberMap[a.billId] || a.billId);
+            return m ? `${m} [${bNum}] (₹${Number(a.amount).toLocaleString('en-IN')})` : `${bNum} (₹${Number(a.amount).toLocaleString('en-IN')})`;
           })
           .join(', ');
       } else {
         const associatedBill = tenantBills.find((b) => b.id === p.billId);
         allocationSummary = associatedBill ? associatedBill.billNumber : billNumberMap[p.billId] || p.billId || 'Direct Payment';
+        allocatedMonths = associatedBill ? `${associatedBill.billingMonth} [${associatedBill.billNumber}]` : (p.billId === 'advance' ? 'Advance Payment' : '—');
       }
 
-      const firstAlloc = Array.isArray(p.allocations) && p.allocations.length > 0 ? p.allocations[0] : null;
-      const associatedBill = tenantBills.find((b) => b.id === p.billId) ||
-        (firstAlloc ? tenantBills.find((b) => b.id === firstAlloc.billId) : null);
       const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
       s3Rows.push([
         idx + 1,
@@ -1002,7 +1013,7 @@ export const excelReportService = {
         p.transactionId || '—',
         allocationSummary,
         (p.status || 'approved').toUpperCase(),
-        associatedBill?.billingMonth || '—',
+        allocatedMonths,
       ]);
     });
 

@@ -127,18 +127,30 @@ export default function DashboardScreen() {
   const vacantUnits = totalUnits - occupiedUnits;
   const activeTenants = tenants.filter(t => t && t.status === 'active').length;
 
-  // Monthly financials computation (based on bills generated in the current month)
+  // Monthly financials computation
   const now = new Date();
   const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; // e.g. "2026-08"
 
   const currentMonthBills = bills.filter(b => b && b.billingMonth === currentMonthStr);
   const totalBilled = currentMonthBills.reduce((acc, b) => acc + (b.totalAmount || 0), 0);
-  const totalReceived = currentMonthBills.reduce((acc, b) => acc + (b.paidAmount || 0), 0);
   const totalPending = currentMonthBills.reduce((acc, b) => acc + (b.remainingAmount || 0), 0);
+
+  // Filter canonical payments (eliminating legacy split double-counting)
+  const canonicalPayments = paymentService.filterCanonicalPayments(payments);
+
+  // Actual monthly collection: strictly based on real payment transactions received in this calendar month
+  const currentMonthApprovedPayments = canonicalPayments.filter(p => {
+    if (p.status === 'rejected' || p.status === 'pending') return false;
+    const pDate = p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
+    return pDate.startsWith(currentMonthStr);
+  });
+  const totalReceived = currentMonthApprovedPayments.reduce(
+    (acc, p) => acc + (Number(p.amount) || Number(p.amountPaid) || 0),
+    0
+  );
 
   // Lists filtering
   const pendingBills = bills.filter(b => b && (b.remainingAmount > 0 || b.paymentStatus === 'unpaid' || b.paymentStatus === 'partial')).slice(0, 5);
-  const canonicalPayments = paymentService.filterCanonicalPayments(payments);
   const recentPayments = [...canonicalPayments].sort((a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || '')).slice(0, 5);
   const pendingPaymentsCount = payments.filter(p => p && p.status === 'pending').length;
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, RefreshControl, Linking, Modal, Clipboard, TextInput, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTenants } from '../../hooks/useTenants';
@@ -151,6 +151,46 @@ export default function TenantDetailsScreen() {
       setLoadingHistory(false);
     }
   }, [id]);
+
+  // Group canonical payments by actual transaction month
+  const groupedPaymentsByMonth = useMemo(() => {
+    const map = new Map<string, { monthKey: string; monthLabel: string; totalReceived: number; list: Payment[] }>();
+
+    payments.forEach((payment) => {
+      const pDate = payment.paymentDate || (payment.createdAt ? payment.createdAt.split('T')[0] : '');
+      let monthKey = 'unknown';
+      let monthLabel = 'Other / Unspecified Date';
+
+      if (pDate && pDate.length >= 7) {
+        monthKey = pDate.slice(0, 7); // "YYYY-MM"
+        try {
+          const [y, m] = monthKey.split('-').map(Number);
+          const d = new Date(y, m - 1, 1);
+          if (!isNaN(d.getTime())) {
+            monthLabel = d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+          }
+        } catch {}
+      }
+
+      if (!map.has(monthKey)) {
+        map.set(monthKey, {
+          monthKey,
+          monthLabel,
+          totalReceived: 0,
+          list: [],
+        });
+      }
+
+      const group = map.get(monthKey)!;
+      const amt = Number(payment.amount) || Number(payment.amountPaid) || 0;
+      if (payment.status !== 'rejected') {
+        group.totalReceived += amt;
+      }
+      group.list.push(payment);
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  }, [payments]);
 
   useEffect(() => {
     fetchHistory();
@@ -618,50 +658,102 @@ export default function TenantDetailsScreen() {
           <View style={styles.listTab}>
             {loadingHistory ? (
               <LoadingView message="Loading payments..." fullscreen={false} />
-            ) : payments.length === 0 ? (
+            ) : groupedPaymentsByMonth.length === 0 ? (
               <View style={styles.emptyCard}>
                 <Ionicons name="cash-outline" size={40} color={colors.textSecondary} />
                 <Text style={styles.emptyText}>No payments recorded yet</Text>
               </View>
             ) : (
-              payments.map((payment) => (
-                <View key={payment.id} style={styles.historyCard}>
-                  <View style={styles.historyHeader}>
-                    <Text style={styles.historyTitle}>{payment.paymentDate}</Text>
-                    <Text style={styles.methodBadge}>{(payment.paymentMethod || 'Payment').toUpperCase()}</Text>
+              groupedPaymentsByMonth.map((group) => (
+                <View key={group.monthKey} style={{ marginBottom: spacing.lg }}>
+                  {/* Month Collection Header */}
+                  <View style={styles.monthGroupHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="calendar" size={16} color={colors.primary} />
+                      <Text style={styles.monthGroupTitle}>{group.monthLabel}</Text>
+                    </View>
+                    <View style={styles.monthGroupTotalBadge}>
+                      <Text style={styles.monthGroupTotalLabel}>Total Collected: </Text>
+                      <Text style={styles.monthGroupTotalValue}>₹{group.totalReceived.toLocaleString('en-IN')}</Text>
+                    </View>
                   </View>
-                  <View style={styles.historyFooter}>
-                    <Text style={styles.historySub}>Txn ID: {payment.transactionId || 'N/A'}</Text>
-                    <MoneyText amount={Number(payment.amount) || Number(payment.amountPaid) || 0} variant="success" />
-                  </View>
-                  {Array.isArray(payment.allocations) && payment.allocations.length > 0 && (
-                    <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border + '30', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                      {payment.allocations.map((alloc, aIdx) => {
-                        const b = bills.find((tb) => tb.id === alloc.billId);
-                        const label = alloc.type === 'advance'
-                          ? `Advance: ₹${Number(alloc.amount).toLocaleString('en-IN')}`
-                          : `${b ? (b.billingMonth || b.billNumber) : alloc.billNumber || 'Bill'}: ₹${Number(alloc.amount).toLocaleString('en-IN')}`;
-                        return (
-                          <View key={aIdx} style={{ backgroundColor: colors.primary + '15', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                            <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '600' }}>
-                              {label}
-                            </Text>
+
+                  {/* Transactions within this Month */}
+                  {group.list.map((payment) => {
+                    const status = payment.status || 'approved';
+                    const isRejected = status === 'rejected';
+                    const isPending = status === 'pending';
+                    const totalAmt = Number(payment.amount) || Number(payment.amountPaid) || 0;
+
+                    return (
+                      <View key={payment.id} style={styles.historyCard}>
+                        <View style={styles.historyHeader}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={styles.historyTitle}>{payment.paymentDate}</Text>
+                            <View style={[
+                              styles.paymentStatusPill,
+                              isRejected ? styles.statusPillRejected : isPending ? styles.statusPillPending : styles.statusPillApproved
+                            ]}>
+                              <Text style={[
+                                styles.paymentStatusPillText,
+                                isRejected ? styles.statusTextRejected : isPending ? styles.statusTextPending : styles.statusTextApproved
+                              ]}>
+                                {status.toUpperCase()}
+                              </Text>
+                            </View>
                           </View>
-                        );
-                      })}
-                    </View>
-                  )}
-                  {payment.screenshotUrl && (
-                    <View style={styles.screenshotLinkContainer}>
-                      <Ionicons name="document-attach-outline" size={14} color={colors.primary} />
-                      <TouchableOpacity onPress={() => Alert.alert('Payment Receipt', 'Open screenshot URL in browser?\n\n' + payment.screenshotUrl, [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Open URL', onPress: () => Linking.openURL(payment.screenshotUrl!) }
-                      ])}>
-                        <Text style={styles.screenshotLinkText}>View Receipt Attachment</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                          <Text style={styles.methodBadge}>{(payment.paymentMethod || 'Payment').toUpperCase()}</Text>
+                        </View>
+
+                        <View style={styles.historyFooter}>
+                          <Text style={styles.historySub}>Txn ID: {payment.transactionId || 'N/A'}</Text>
+                          <MoneyText
+                            amount={totalAmt}
+                            variant={isRejected ? 'normal' : 'success'}
+                            style={isRejected ? { textDecorationLine: 'line-through', color: colors.textSecondary } : undefined}
+                          />
+                        </View>
+
+                        {/* Breakdown of how this single transaction was adjusted */}
+                        {Array.isArray(payment.allocations) && payment.allocations.length > 0 && (
+                          <View style={styles.allocationBox}>
+                            <Text style={styles.allocationBoxTitle}>Bill Allocation Breakdown</Text>
+                            {payment.allocations.map((alloc, aIdx) => {
+                              const b = bills.find((tb) => tb.id === alloc.billId);
+                              const billRef = alloc.type === 'advance'
+                                ? 'Adjusted to Advance Rent'
+                                : `Adjusted against ${b?.billingMonth ? b.billingMonth + ' ' : ''}(${b?.billNumber || alloc.billNumber || 'Bill'})`;
+                              return (
+                                <View key={aIdx} style={styles.allocationRow}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 }}>
+                                    <Ionicons name="return-down-forward" size={14} color={colors.primary} />
+                                    <Text style={styles.allocationLabel} numberOfLines={1}>
+                                      {billRef}
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.allocationAmountText}>
+                                    ₹{Number(alloc.amount).toLocaleString('en-IN')}
+                                  </Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        )}
+
+                        {payment.screenshotUrl && (
+                          <View style={styles.screenshotLinkContainer}>
+                            <Ionicons name="document-attach-outline" size={14} color={colors.primary} />
+                            <TouchableOpacity onPress={() => Alert.alert('Payment Receipt', 'Open screenshot URL in browser?\n\n' + payment.screenshotUrl, [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Open URL', onPress: () => Linking.openURL(payment.screenshotUrl!) }
+                            ])}>
+                              <Text style={styles.screenshotLinkText}>View Receipt Attachment</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
                 </View>
               ))
             )}
@@ -938,7 +1030,99 @@ const getStyles = (colors: any) => StyleSheet.create({
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: spacing.sm,
     ...spacing.shadows.light,
+  },
+  monthGroupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: spacing.borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.xs + 2,
+  },
+  monthGroupTitle: {
+    fontSize: typography.sizes.sm + 1,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  monthGroupTotalBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.success + '15',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  monthGroupTotalLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    fontWeight: typography.weights.medium,
+  },
+  monthGroupTotalValue: {
+    fontSize: typography.sizes.xs + 1,
+    color: colors.success,
+    fontWeight: typography.weights.bold,
+  },
+  paymentStatusPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  statusPillApproved: {
+    backgroundColor: colors.success + '20',
+  },
+  statusPillPending: {
+    backgroundColor: '#FEF3C7',
+  },
+  statusPillRejected: {
+    backgroundColor: colors.danger + '20',
+  },
+  paymentStatusPillText: {
+    fontSize: 9.5,
+    fontWeight: typography.weights.bold,
+  },
+  statusTextApproved: {
+    color: colors.success,
+  },
+  statusTextPending: {
+    color: '#D97706',
+  },
+  statusTextRejected: {
+    color: colors.danger,
+  },
+  allocationBox: {
+    marginTop: spacing.xs + 2,
+    paddingTop: spacing.xs + 2,
+    borderTopWidth: 1,
+    borderTopColor: colors.border + '30',
+  },
+  allocationBoxTitle: {
+    fontSize: typography.sizes.xs - 1,
+    fontWeight: typography.weights.bold,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  allocationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  allocationLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+  },
+  allocationAmountText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
   },
   historyHeader: {
     flexDirection: 'row',

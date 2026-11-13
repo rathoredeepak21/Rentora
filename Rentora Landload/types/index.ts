@@ -175,6 +175,8 @@ export interface PaymentAllocation {
   amount: number;
   type: 'bill_due' | 'advance';
   allocatedAt?: string;
+  paymentId?: string;
+  transactionId?: string;
 }
 
 export interface Payment {
