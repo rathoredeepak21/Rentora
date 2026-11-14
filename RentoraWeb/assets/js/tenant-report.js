@@ -2788,11 +2788,14 @@
     container.style.position = 'fixed';
     container.style.top = '0';
     container.style.left = '0';
-    container.style.width = '100%';
+    container.style.width = '1060px';
+    container.style.minHeight = '750px';
     container.style.zIndex = '-99999';
     container.style.backgroundColor = '#ffffff';
+    container.style.opacity = '1';
     container.style.visibility = 'visible';
     container.style.pointerEvents = 'none';
+    container.style.overflow = 'hidden';
     container.style.boxSizing = 'border-box';
     container.style.margin = '0';
     container.style.padding = '0';
@@ -2809,8 +2812,13 @@
     document.body.appendChild(container);
 
     try {
+      // Wait for fonts if ready
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch (_) {}
+      }
+
       // Allow browser to perform layout and render typography
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 250));
 
       const targetEl = container.querySelector('.pdf-content-wrapper') || container;
       const opt = {
@@ -2820,8 +2828,10 @@
         html2canvas: {
           scale: 2,
           useCORS: true,
+          allowTaint: true,
           logging: false,
-          backgroundColor: '#ffffff'
+          scrollX: 0,
+          scrollY: 0
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
         pagebreak: {
