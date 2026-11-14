@@ -121,6 +121,8 @@
         electricityCharge: 560,
         previousMeterReading: 420,
         currentMeterReading: 476,
+        previousMeterReadingDate: '2026-09-01',
+        currentMeterReadingDate: '2026-10-01',
         electricityUnits: 56,
         electricityRate: 10,
         waterCharge: 200,
@@ -151,6 +153,8 @@
         electricityCharge: 620,
         previousMeterReading: 510,
         currentMeterReading: 572,
+        previousMeterReadingDate: '2026-09-01',
+        currentMeterReadingDate: '2026-10-01',
         electricityUnits: 62,
         electricityRate: 10,
         waterCharge: 200,
@@ -181,6 +185,8 @@
         electricityCharge: 420,
         previousMeterReading: 380,
         currentMeterReading: 422,
+        previousMeterReadingDate: '2026-09-01',
+        currentMeterReadingDate: '2026-10-01',
         electricityUnits: 42,
         electricityRate: 10,
         waterCharge: 200,
@@ -4011,6 +4017,18 @@
     const seq = state.bills.length + 1;
     const billNumber = `INV-${year}-${String(seq).padStart(5, '0')}`;
 
+    let prevReadingDate = '';
+    if (tenant) {
+      const unitBills = state.bills.filter(b => b.unitId === unitId && b.tenantId === tenant.id);
+      if (unitBills.length > 0) {
+        const sorted = [...unitBills].sort((a, b) => (b.billingMonth || '').localeCompare(a.billingMonth || ''));
+        prevReadingDate = sorted[0].currentMeterReadingDate || (sorted[0].createdAt ? sorted[0].createdAt.split('T')[0] : '');
+      } else {
+        prevReadingDate = tenant.moveInDate || tenant.moveIn || '';
+      }
+    }
+    const currReadingDate = new Date().toISOString().split('T')[0];
+
     const billData = {
       ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
       tenantId: tenant ? tenant.id : '',
@@ -4024,6 +4042,8 @@
       dueDate,
       previousMeterReading: prevReading,
       currentMeterReading: currReading,
+      previousMeterReadingDate: prevReadingDate ? prevReadingDate.split('T')[0] : '',
+      currentMeterReadingDate: currReadingDate,
       electricityUnits: unitsConsumed,
       electricityRate: elecRate,
       electricityCharge: elecCharge,
