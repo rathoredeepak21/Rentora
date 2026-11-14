@@ -3616,6 +3616,12 @@ textarea {
   flex-shrink: 0;
 }
 
+.rpt-type-icon--property {
+  background: rgba(79, 70, 229, 0.15);
+  color: #4F46E5;
+  border: 1px solid rgba(79, 70, 229, 0.3);
+}
+
 .rpt-type-icon--active {
   background: rgba(16, 185, 129, 0.15);
   color: #10B981;
@@ -3635,6 +3641,12 @@ textarea {
   padding: 2px 8px;
   border-radius: 999px;
   text-transform: uppercase;
+}
+
+.rpt-badge--property {
+  background: rgba(79, 70, 229, 0.2);
+  color: #6366F1;
+  border: 1px solid rgba(79, 70, 229, 0.4);
 }
 
 .rpt-badge--active {

@@ -1029,13 +1029,13 @@
           <div id="portalSettlementsList" style="display: flex; flex-direction: column; gap: 16px;"></div>
         </div>
 
-        <!-- Panel 7: Tenant-Wise Historical Reports -->
+        <!-- Panel 7: Tenant-Wise & Property-Wise Reports -->
         <div id="panel-reports" class="dashboard-panel">
           <div style="margin-bottom: 24px;">
             <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
               <div>
-                <h3 style="font-family: var(--font-heading); font-size: 1.35rem; font-weight: 800; color: var(--text-main); margin: 0;">Tenant-Wise Historical Reports</h3>
-                <p style="font-size: 0.88rem; color: var(--text-secondary); margin-top: 4px;">Download comprehensive financial ledgers, bills, and payment records in Excel (.xlsx) and PDF formats.</p>
+                <h3 style="font-family: var(--font-heading); font-size: 1.35rem; font-weight: 800; color: var(--text-main); margin: 0;">Reports &amp; Financial Statements</h3>
+                <p style="font-size: 0.88rem; color: var(--text-secondary); margin-top: 4px;">Download comprehensive property business reports, tenant financial ledgers, and billing records in Excel (.xlsx) and PDF formats.</p>
               </div>
             </div>
           </div>
@@ -1047,7 +1047,24 @@
               <span>1. Select Report Type</span>
             </div>
             <div class="rpt-type-grid" style="margin-top: 8px;">
-              <!-- Option 1: Active Tenant -->
+              <!-- Option 1: Property-Wise Report -->
+              <div id="rptTypeCardProperty" class="rpt-type-card" onclick="setReportType('property')">
+                <div style="display: flex; align-items: flex-start; gap: 14px;">
+                  <div class="rpt-type-icon-box rpt-type-icon--property">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/><path d="M9 9h1"/><path d="M9 13h1"/><path d="M9 17h1"/><path d="M14 9h1"/><path d="M14 13h1"/><path d="M14 17h1"/></svg>
+                  </div>
+                  <div style="flex: 1;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; gap: 8px;">
+                      <strong style="font-size: 0.95rem; color: var(--text-main);">Property-Wise Report</strong>
+                      <span class="rpt-badge rpt-badge--property">BUSINESS REPORT</span>
+                    </div>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0; line-height: 1.4;">
+                      Consolidated monthly or periodic report. Occupancy rates, rent collection, unit breakdown, utility consumption, and 12-sheet Excel &amp; landscape PDF export.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <!-- Option 2: Active Tenant -->
               <div id="rptTypeCardActive" class="rpt-type-card rpt-type-card--selected" onclick="setReportType('active')">
                 <div style="display: flex; align-items: flex-start; gap: 14px;">
                   <div class="rpt-type-icon-box rpt-type-icon--active">
@@ -1064,7 +1081,7 @@
                   </div>
                 </div>
               </div>
-              <!-- Option 2: Vacated Tenant -->
+              <!-- Option 3: Vacated Tenant -->
               <div id="rptTypeCardVacated" class="rpt-type-card" onclick="setReportType('vacated')">
                 <div style="display: flex; align-items: flex-start; gap: 14px;">
                   <div class="rpt-type-icon-box rpt-type-icon--vacated">
@@ -1102,8 +1119,8 @@
             </div>
           </div>
 
-          <!-- 3. Select Tenant -->
-          <div class="form-section-card" style="margin-bottom: 20px;">
+          <!-- 3. Select Tenant (Hidden in Property-Wise Report) -->
+          <div id="rptTenantSectionCard" class="form-section-card" style="margin-bottom: 20px;">
             <div class="form-section-header">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
               <span id="rptTenantStepLabel">3. Select Active Tenant</span>
@@ -1126,7 +1143,49 @@
             <div id="rptTenantListArea" style="display: none;"></div>
           </div>
 
-          <!-- 4. Date Range Selection (for Active Tenants) -->
+          <!-- 4A. Property-Wise Report Period -->
+          <div id="rptPropertyPeriodCard" class="form-section-card" style="margin-bottom: 20px; display: none;">
+            <div class="form-section-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>3. Select Reporting Month / Period</span>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px;">
+              Select a reporting month or specify a custom date range to evaluate property revenue, occupancy rates, utility consumption, and collections.
+            </p>
+            <div class="input-row" style="margin-bottom: 12px;">
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="rptPropertyMonthSelect">Reporting Month</label>
+                <select id="rptPropertyMonthSelect" class="form-control" onchange="handlePropertyMonthChange(this.value)">
+                  <!-- Populated dynamically -->
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="rptPropStartDate">Custom From Date</label>
+                <input type="date" id="rptPropStartDate" class="form-control" onchange="handlePropertyCustomDateChange()" />
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" for="rptPropEndDate">Custom To Date</label>
+                <input type="date" id="rptPropEndDate" class="form-control" onchange="handlePropertyCustomDateChange()" />
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setPropertyQuickRange('currentMonth')">Current Month</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setPropertyQuickRange('lastMonth')">Last Month</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setPropertyQuickRange('last3m')">Last 3 Months</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setPropertyQuickRange('last6m')">Last 6 Months</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setPropertyQuickRange('thisYear')">Year to Date (YTD)</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="setPropertyQuickRange('all')">All Time</button>
+            </div>
+            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <button type="button" class="btn btn-primary" id="rptPropertyGenerateBtn" onclick="generateSelectedReport()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                <span>Generate Property Report</span>
+              </button>
+              <span id="rptPropertyPeriodInfo" style="font-size: 0.82rem; color: var(--text-muted);"></span>
+            </div>
+          </div>
+
+          <!-- 4B. Date Range Selection (for Active Tenants) -->
           <div id="rptDateRangeCard" class="form-section-card" style="margin-bottom: 20px; display: none;">
             <div class="form-section-header">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -1164,8 +1223,8 @@
           <!-- Loading State Indicator -->
           <div id="rptLoadingIndicator" style="display: none; padding: 24px; text-align: center; background: var(--bg-surface-elevated); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); margin-bottom: 20px;">
             <div class="loading-spinner" style="width: 32px; height: 32px; border: 3px solid rgba(79,70,229,0.2); border-top-color: var(--primary); border-radius: 50%; margin: 0 auto 12px; animation: spin 0.8s linear infinite;"></div>
-            <div style="font-size: 0.92rem; font-weight: 600; color: var(--text-main);">Generating Tenant Historical Report...</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">Computing billing history, actual payment ledger, and meter records.</div>
+            <div id="rptLoadingTitle" style="font-size: 0.92rem; font-weight: 600; color: var(--text-main);">Generating Report...</div>
+            <div id="rptLoadingSubtitle" style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">Computing billing history, actual payment ledger, and meter records.</div>
           </div>
 
           <!-- 5. Report Preview & Download Card -->
@@ -1182,21 +1241,21 @@
               <!-- Expiry / Active Banner -->
               <div id="rptExpiryBanner" style="margin-bottom: 16px;"></div>
 
-              <!-- Tenant Summary -->
+              <!-- Summary Card (Tenant Profile or Property Overview) -->
               <div id="rptTenantSummary" style="margin-bottom: 20px; padding: 18px; background: var(--bg-surface-elevated); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);"></div>
 
-              <!-- Detailed Preview Tabs / Sections (Bills, Payments, Ledger) -->
+              <!-- Detailed Preview Tabs / Sections (Bills, Payments, Ledger, Units, etc.) -->
               <div id="rptDetailedPreview" style="margin-bottom: 20px;"></div>
 
-              <!-- Download Buttons (6. Export Excel, 7. Export PDF) -->
+              <!-- Download Buttons (Export Excel, Export PDF) -->
               <div id="rptDownloadBtns" style="display: flex; gap: 12px; flex-wrap: wrap;">
-                <button class="btn btn-secondary" onclick="downloadTenantExcel()" id="rptExcelBtn">
+                <button class="btn btn-secondary" onclick="downloadSelectedExcel()" id="rptExcelBtn">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                  <span>6. Download Excel (.xlsx)</span>
+                  <span id="rptExcelBtnText">Download Excel (.xlsx)</span>
                 </button>
-                <button class="btn btn-secondary" onclick="downloadTenantPDF()" id="rptPdfBtn">
+                <button class="btn btn-secondary" onclick="downloadSelectedPDF()" id="rptPdfBtn">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-                  <span>7. Download PDF</span>
+                  <span id="rptPdfBtnText">Download PDF</span>
                 </button>
               </div>
             </div>

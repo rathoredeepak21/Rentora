@@ -16,11 +16,15 @@
   const REPORT_ACCESS_MS = 30 * 24 * 60 * 60 * 1000; // 30 days in ms for vacated tenants
 
   // ── Module State ───────────────────────────────────────────────────────────
-  let _currentReportType = 'active'; // 'active' | 'vacated'
+  let _currentReportType = 'active'; // 'property' | 'active' | 'vacated'
+  let _currentReportPropertyId = 'all'; // 'all' or specific propertyId
   let _currentReportTenantId = null;
   let _currentStartDate = '';
   let _currentEndDate = '';
-  let _activePreviewTab = 'summary'; // 'summary' | 'bills' | 'payments' | 'ledger' | 'dues'
+  let _currentPropMonth = '';
+  let _currentPropStartDate = '';
+  let _currentPropEndDate = '';
+  let _activePreviewTab = 'summary'; // 'summary' | 'bills' | 'payments' | 'ledger' | 'units' | 'utilities' | 'dues'
 
   // ── Formatting Helpers ─────────────────────────────────────────────────────
   function fmt(val) {
@@ -95,6 +99,126 @@
     if (!isNaN(remaining) && remaining <= 0 && paid > 0) return 'PAID';
     if (paid > 0) return 'PARTIALLY PAID';
     return 'UNPAID';
+  }
+
+  function formatExcelDate(dateStr) {
+    if (!dateStr) return '-';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      const day = String(d.getDate()).padStart(2, '0');
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${day}-${months[d.getMonth()]}-${d.getFullYear()}`;
+    } catch (_) {
+      return dateStr;
+    }
+  }
+
+  function getPropertyMonthOptions() {
+    const options = [];
+    const currentDate = new Date();
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+      const label = d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const value = `${year}-${month}`;
+      options.push({ label, value });
+    }
+    return options;
+  }
+
+  function filterCanonicalPayments(payments) {
+    if (!Array.isArray(payments)) return [];
+    const withoutExplicitChild = payments.filter(p => !p.isSplitChild);
+    const seenParentIds = new Set();
+    const result = [];
+
+    for (const p of withoutExplicitChild) {
+      if (p.allocations && p.allocations.length > 0) {
+        result.push(p);
+      } else if (p.parentPaymentId && withoutExplicitChild.filter(x => x.parentPaymentId === p.parentPaymentId).length > 1) {
+        if (!seenParentIds.has(p.parentPaymentId)) {
+          seenParentIds.add(p.parentPaymentId);
+          const siblings = withoutExplicitChild.filter(x => x.parentPaymentId === p.parentPaymentId);
+          const totalAmount = siblings.reduce((sum, s) => sum + (Number(s.amount) || Number(s.amountPaid) || 0), 0);
+          const combinedAllocations = siblings.map(s => ({
+            billId: s.billId,
+            amount: Number(s.amount) || Number(s.amountPaid) || 0,
+            type: s.billId === 'advance' ? 'advance' : 'bill_due'
+          }));
+          result.push({
+            ...p,
+            amount: totalAmount,
+            allocations: combinedAllocations
+          });
+        }
+      } else {
+        result.push(p);
+      }
+    }
+    return result;
+  }
+
+  function allocatePaymentProportional(payment, allBills) {
+    if (Array.isArray(payment.allocations) && payment.allocations.length > 0) {
+      const result = {
+        rent: 0, electricity: 0, water: 0, parking: 0, maintenance: 0, other: 0, previousDue: 0
+      };
+      for (const alloc of payment.allocations) {
+        if (alloc.type === 'advance') {
+          result.rent += Number(alloc.amount) || 0;
+          continue;
+        }
+        const bill = (allBills || []).find(b => b.id === alloc.billId);
+        if (!bill || !bill.totalAmount) {
+          result.rent += Number(alloc.amount) || 0;
+          continue;
+        }
+        const ratio = (Number(alloc.amount) || 0) / (Number(bill.totalAmount) || 1);
+        result.rent += (Number(bill.rent) || 0) * ratio;
+        result.electricity += (Number(bill.electricityCharge) || 0) * ratio;
+        result.water += (Number(bill.waterCharge) || 0) * ratio;
+        result.parking += (Number(bill.parkingCharge) || 0) * ratio;
+        result.maintenance += (Number(bill.maintenanceCharge) || 0) * ratio;
+        result.other += (Number(bill.otherCharges) || 0) * ratio;
+        result.previousDue += (Number(bill.previousDue) || 0) * ratio;
+      }
+      return result;
+    }
+
+    const bill = (allBills || []).find(b => b.id === payment.billId);
+    if (!bill) {
+      return {
+        rent: Number(payment.amount) || Number(payment.amountPaid) || 0,
+        electricity: 0, water: 0, parking: 0, maintenance: 0, other: 0, previousDue: 0
+      };
+    }
+    const ratio = (Number(bill.totalAmount) > 0) ? ((Number(payment.amount) || Number(payment.amountPaid) || 0) / Number(bill.totalAmount)) : 0;
+    return {
+      rent: (Number(bill.rent) || 0) * ratio,
+      electricity: (Number(bill.electricityCharge) || 0) * ratio,
+      water: (Number(bill.waterCharge) || 0) * ratio,
+      parking: (Number(bill.parkingCharge) || 0) * ratio,
+      maintenance: (Number(bill.maintenanceCharge) || 0) * ratio,
+      other: (Number(bill.otherCharges) || 0) * ratio,
+      previousDue: (Number(bill.previousDue) || 0) * ratio
+    };
+  }
+
+  function getDaysOverdue(dueDateStr) {
+    if (!dueDateStr) return 0;
+    try {
+      const due = new Date(dueDateStr);
+      const today = new Date();
+      due.setHours(0,0,0,0);
+      today.setHours(0,0,0,0);
+      const diffTime = today.getTime() - due.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return diffDays > 0 ? diffDays : 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   // ── Date & Meter Reading Helpers ───────────────────────────────────────────
@@ -576,33 +700,259 @@
     };
   }
 
+  // ── Core Property Report Data Assembler ────────────────────────────────────
+  function assemblePropertyReportData(propertyId, monthStr, customStartDate, customEndDate) {
+    const st = getState();
+    if (!st) return { error: 'no_state', message: 'Application data is loading. Please wait a moment and try again.' };
+
+    const allProperties = Array.isArray(st.properties) ? [...st.properties] : [];
+    if (allProperties.length === 0) {
+      return { error: 'no_properties', message: 'No properties found in your account.' };
+    }
+
+    const selectedProperties = (!propertyId || propertyId === 'all')
+      ? allProperties
+      : allProperties.filter(p => p.id === propertyId);
+
+    const propIds = selectedProperties.map(p => p.id);
+    const selectedPropertyNames = (!propertyId || propertyId === 'all')
+      ? 'All Properties'
+      : (selectedProperties[0]?.name || 'Property');
+
+    // 1. Determine period
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    let startPeriod = '';
+    let endPeriod = '';
+    let periodLabel = '';
+    let activeMonthStr = monthStr || '';
+
+    if (customStartDate && customEndDate) {
+      startPeriod = customStartDate;
+      endPeriod = customEndDate;
+      periodLabel = `${fmtDate(customStartDate)} → ${fmtDate(customEndDate)}`;
+    } else if (monthStr) {
+      startPeriod = `${monthStr}-01`;
+      endPeriod = `${monthStr}-31`;
+      const parts = monthStr.split('-');
+      if (parts.length === 2) {
+        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
+        periodLabel = d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      } else {
+        periodLabel = monthStr;
+      }
+    } else {
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      activeMonthStr = `${year}-${month}`;
+      startPeriod = `${activeMonthStr}-01`;
+      endPeriod = `${activeMonthStr}-31`;
+      periodLabel = today.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    }
+
+    // 2. Filter units
+    const allUnits = Array.isArray(st.units) ? st.units : [];
+    const filteredUnits = allUnits.filter(u => propIds.includes(u.propertyId));
+
+    // 3. Filter tenants (active or residing during this period)
+    const allTenants = Array.isArray(st.tenants) ? st.tenants : [];
+    const filteredTenants = allTenants.filter(t => {
+      if (!propIds.includes(t.propertyId)) return false;
+      const moveIn = t.moveIn || t.moveInDate || '';
+      const moveOut = t.moveOut || t.moveOutDate || '';
+      return (!moveIn || moveIn <= endPeriod) && (t.status === 'active' || !moveOut || moveOut >= startPeriod);
+    });
+
+    // 4. Bills: decorate bills chronologically per tenant
+    const rawBills = Array.isArray(st.bills) ? st.bills : [];
+    const filteredBills = rawBills.filter(b => {
+      if (!propIds.includes(b.propertyId)) return false;
+      if (activeMonthStr && b.billingMonth === activeMonthStr) return true;
+      const bDate = getBillDate(b);
+      if (bDate && bDate >= startPeriod && bDate <= endPeriod) return true;
+      if (b.billingMonth && b.billingMonth >= startPeriod.slice(0, 7) && b.billingMonth <= endPeriod.slice(0, 7)) return true;
+      return false;
+    });
+
+    // 5. Canonical Payments
+    const rawPayments = Array.isArray(st.payments) ? st.payments : [];
+    const canonicalPayments = filterCanonicalPayments(rawPayments);
+    const filteredPayments = canonicalPayments.filter(p => {
+      if (p.status === 'rejected' || p.status === 'pending') return false;
+      const pDate = getPaymentDate(p);
+      if (!pDate) return false;
+
+      // Date check
+      if (activeMonthStr && !pDate.startsWith(activeMonthStr) && !(pDate >= startPeriod && pDate <= endPeriod)) {
+        return false;
+      }
+      if (!activeMonthStr && (pDate < startPeriod || pDate > endPeriod)) {
+        return false;
+      }
+
+      // Property check
+      let pPropId = p.propertyId;
+      if (!pPropId && p.billId && p.billId !== 'advance') {
+        pPropId = rawBills.find(b => b.id === p.billId)?.propertyId;
+      }
+      if (!pPropId && Array.isArray(p.allocations) && p.allocations.length > 0) {
+        const firstBillAlloc = p.allocations.find(a => a.billId !== 'advance');
+        if (firstBillAlloc) {
+          pPropId = rawBills.find(b => b.id === firstBillAlloc.billId)?.propertyId;
+        }
+      }
+      if (!pPropId && p.tenantId) {
+        pPropId = allTenants.find(t => t.id === p.tenantId)?.propertyId;
+      }
+
+      return pPropId ? propIds.includes(pPropId) : false;
+    });
+
+    // 6. Proportional payment allocations
+    let collRent = 0;
+    let collElec = 0;
+    let collWater = 0;
+    let collParking = 0;
+    let collMaint = 0;
+    let collOther = 0;
+    let collPrevDue = 0;
+
+    filteredPayments.forEach(p => {
+      const allocation = allocatePaymentProportional(p, rawBills);
+      collRent += allocation.rent;
+      collElec += allocation.electricity;
+      collWater += allocation.water;
+      collParking += allocation.parking;
+      collMaint += allocation.maintenance;
+      collOther += allocation.other;
+      collPrevDue += allocation.previousDue;
+    });
+
+    const collTotal = collRent + collElec + collWater + collParking + collMaint + collOther + collPrevDue;
+
+    // 7. Overall financial aggregates
+    const expectedRent = filteredBills.reduce((sum, b) => sum + (Number(b.rent) || 0), 0);
+    const rentCollected = collRent;
+    const rentOutstanding = Math.max(0, expectedRent - collRent);
+    const totalBilled = filteredBills.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
+    const totalCollected = filteredPayments.reduce((sum, p) => sum + (Number(p.amount) || Number(p.amountPaid) || 0), 0);
+    const totalOutstanding = filteredBills.reduce((sum, b) => sum + (Number(b.remainingAmount) || 0), 0);
+    const previousDueTotal = filteredBills.reduce((sum, b) => sum + (Number(b.previousDue) || 0), 0);
+
+    const totalRooms = (!propertyId || propertyId === 'all')
+      ? selectedProperties.reduce((sum, p) => sum + (p.totalUnits || filteredUnits.filter(u => u.propertyId === p.id).length), 0)
+      : (selectedProperties[0]?.totalUnits || filteredUnits.length);
+
+    const occupiedRooms = filteredUnits.filter(u => u.status === 'occupied').length;
+    const vacantRooms = Math.max(0, totalRooms - occupiedRooms);
+    const occupancyRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+    const vacancyRate = totalRooms > 0 ? (vacantRooms / totalRooms) * 100 : 0;
+
+    const paidBillsCount = filteredBills.filter(b => b.paymentStatus === 'paid' || Number(b.remainingAmount) <= 0).length;
+    const partialBillsCount = filteredBills.filter(b => b.paymentStatus === 'partial' || (Number(b.paidAmount) > 0 && Number(b.remainingAmount) > 0)).length;
+    const unpaidBillsCount = filteredBills.filter(b => (b.paymentStatus === 'unpaid' || !b.paymentStatus) && Number(b.paidAmount) === 0).length;
+
+    const newTenantsList = filteredTenants.filter(t => {
+      const mi = t.moveIn || t.moveInDate;
+      return mi && mi >= startPeriod && mi <= endPeriod;
+    });
+    const vacatedTenantsList = filteredTenants.filter(t => {
+      const mo = t.moveOut || t.moveOutDate;
+      return t.status === 'vacated' && mo && mo >= startPeriod && mo <= endPeriod;
+    });
+
+    const outstandingBills = filteredBills.filter(b => Number(b.remainingAmount) > 0);
+    const settings = (st.settings && typeof st.settings === 'object') ? st.settings : {};
+
+    return {
+      ok: true,
+      reportType: 'property',
+      propertyId: propertyId || 'all',
+      propertyNames: selectedPropertyNames,
+      properties: selectedProperties,
+      periodLabel,
+      monthStr: activeMonthStr,
+      startDate: startPeriod,
+      endDate: endPeriod,
+      units: filteredUnits,
+      tenants: filteredTenants,
+      bills: filteredBills,
+      payments: filteredPayments,
+      newTenants: newTenantsList,
+      vacatedTenants: vacatedTenantsList,
+      outstandingBills,
+      settings,
+      summary: {
+        expectedRent,
+        rentCollected,
+        rentOutstanding,
+        totalBilled,
+        totalCollected,
+        totalOutstanding,
+        previousDueTotal,
+        collRent,
+        collElec,
+        collWater,
+        collParking,
+        collMaint,
+        collOther,
+        collPrevDue,
+        collTotal,
+        totalRooms,
+        occupiedRooms,
+        vacantRooms,
+        occupancyRate,
+        vacancyRate,
+        paidBillsCount,
+        partialBillsCount,
+        unpaidBillsCount,
+        newTenantsCount: newTenantsList.length,
+        vacatedTenantsCount: vacatedTenantsList.length,
+        totalTenantsCount: filteredTenants.length,
+        totalBillsCount: filteredBills.length,
+        totalPaymentsCount: filteredPayments.length
+      }
+    };
+  }
+
   // ── UI: Report Type Switching ───────────────────────────────────────────────
   window.setReportType = function (type) {
-    if (type !== 'active' && type !== 'vacated') return;
+    if (type !== 'property' && type !== 'active' && type !== 'vacated') return;
     _currentReportType = type;
 
     // Toggle selected state on cards
+    const cardProperty = document.getElementById('rptTypeCardProperty');
     const cardActive = document.getElementById('rptTypeCardActive');
     const cardVacated = document.getElementById('rptTypeCardVacated');
+    if (cardProperty) cardProperty.classList.toggle('rpt-type-card--selected', type === 'property');
     if (cardActive) cardActive.classList.toggle('rpt-type-card--selected', type === 'active');
     if (cardVacated) cardVacated.classList.toggle('rpt-type-card--selected', type === 'vacated');
 
-    // Update Step 3 header
+    // Show/hide Tenant selection section (hidden in Property-Wise Report)
+    const tenantSection = document.getElementById('rptTenantSectionCard');
+    if (tenantSection) {
+      tenantSection.style.display = (type === 'property') ? 'none' : 'block';
+    }
+
+    // Update Step 3 header if in tenant mode
     const stepLabel = document.getElementById('rptTenantStepLabel');
     if (stepLabel) {
       stepLabel.textContent = type === 'active' ? '3. Select Active Tenant' : '3. Select Vacated Tenant';
     }
 
+    // Period cards
+    const propPeriodCard = document.getElementById('rptPropertyPeriodCard');
+    const dateCard = document.getElementById('rptDateRangeCard');
+    const vacatedAction = document.getElementById('rptVacatedActionArea');
+
+    if (propPeriodCard) propPeriodCard.style.display = (type === 'property') ? 'block' : 'none';
+    if (dateCard) dateCard.style.display = (type === 'active' && _currentReportTenantId) ? 'block' : 'none';
+    if (vacatedAction) vacatedAction.style.display = (type === 'vacated' && _currentReportTenantId) ? 'block' : 'none';
+
     // Reset selection and clear loaded report
     _currentReportTenantId = null;
     const reportCard = document.getElementById('rptTenantCard');
     if (reportCard) reportCard.style.display = 'none';
-
-    const dateCard = document.getElementById('rptDateRangeCard');
-    if (dateCard) dateCard.style.display = 'none';
-
-    const vacatedAction = document.getElementById('rptVacatedActionArea');
-    if (vacatedAction) vacatedAction.style.display = 'none';
 
     const genBtn = document.getElementById('rptGenerateBtn');
     if (genBtn) genBtn.disabled = true;
@@ -610,19 +960,8 @@
     const vacatedBtn = document.getElementById('rptVacatedGenerateBtn');
     if (vacatedBtn) vacatedBtn.disabled = true;
 
-    // Refresh tenant dropdown according to new report type
-    const propSel = document.getElementById('rptPropertySelect');
-    if (propSel && propSel.value) {
-      window.handleReportPropertyChange(propSel.value);
-    } else {
-      const tenantSelect = document.getElementById('rptTenantSelect');
-      if (tenantSelect) {
-        tenantSelect.disabled = true;
-        tenantSelect.innerHTML = '<option value="">— Select a property first —</option>';
-      }
-      const helper = document.getElementById('rptTenantHelperText');
-      if (helper) helper.innerHTML = '';
-    }
+    // Refresh properties options according to new report type
+    window.renderReportsPanel();
   };
 
   // ── UI: Render Reports Panel & Populate Properties ─────────────────────────
@@ -692,37 +1031,82 @@
       return;
     }
 
-    let propOptions = '<option value="">— Select a property —</option>';
+    let propOptions = '';
     let foundSelected = false;
 
-    properties.forEach(p => {
-      const isSel = (p.id === defaultVal);
-      if (isSel) foundSelected = true;
-      const typeLabel = p.type ? ` (${p.type})` : '';
-      propOptions += `<option value="${p.id}" ${isSel ? 'selected' : ''}>${p.name}${typeLabel}</option>`;
-    });
+    if (_currentReportType === 'property') {
+      const isAllSel = (!_currentReportPropertyId || _currentReportPropertyId === 'all');
+      propOptions += `<option value="all" ${isAllSel ? 'selected' : ''}>All Properties (Portfolio Overview)</option>`;
+      if (isAllSel) foundSelected = true;
+
+      properties.forEach(p => {
+        const isSel = (p.id === _currentReportPropertyId);
+        if (isSel) foundSelected = true;
+        const typeLabel = p.type ? ` (${p.type})` : '';
+        propOptions += `<option value="${p.id}" ${isSel ? 'selected' : ''}>${p.name}${typeLabel}</option>`;
+      });
+    } else {
+      propOptions = '<option value="">— Select a property —</option>';
+      properties.forEach(p => {
+        const isSel = (p.id === defaultVal);
+        if (isSel) foundSelected = true;
+        const typeLabel = p.type ? ` (${p.type})` : '';
+        propOptions += `<option value="${p.id}" ${isSel ? 'selected' : ''}>${p.name}${typeLabel}</option>`;
+      });
+    }
 
     propSel.innerHTML = propOptions;
 
     const propHelper = document.getElementById('rptPropertyHelperText');
     if (propHelper) {
-      propHelper.innerHTML = `<span style="font-size:0.8rem;color:var(--text-secondary);">${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} available</span>`;
+      if (_currentReportType === 'property') {
+        propHelper.innerHTML = `<span style="font-size:0.8rem;color:var(--text-secondary);">${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} in portfolio. Select specific or all.</span>`;
+      } else {
+        propHelper.innerHTML = `<span style="font-size:0.8rem;color:var(--text-secondary);">${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} available</span>`;
+      }
     }
 
-    // If a property was selected or default is available, trigger tenant loading
-    const activeVal = foundSelected ? defaultVal : propSel.value;
-    if (activeVal) {
-      window.handleReportPropertyChange(activeVal);
+    if (_currentReportType === 'property') {
+      // Populate month options if needed
+      const monthSel = document.getElementById('rptPropertyMonthSelect');
+      if (monthSel) {
+        if (!monthSel.options || monthSel.options.length === 0) {
+          const months = getPropertyMonthOptions();
+          let mHtml = '';
+          months.forEach((m, idx) => {
+            mHtml += `<option value="${m.value}" ${idx === 0 ? 'selected' : ''}>${m.label}</option>`;
+          });
+          monthSel.innerHTML = mHtml;
+          if (!_currentPropMonth && months.length > 0) {
+            _currentPropMonth = months[0].value;
+          }
+        }
+      }
+      updatePropertyPeriodInfo();
+      window.generateSelectedReport();
+    } else {
+      // If a property was selected or default is available, trigger tenant loading
+      const activeVal = foundSelected ? defaultVal : propSel.value;
+      if (activeVal) {
+        window.handleReportPropertyChange(activeVal);
+      }
     }
   };
 
   // ── UI: Handle Property Change (Cascading Tenant Dropdown) ──────────────────
   window.handleReportPropertyChange = async function (propertyId) {
+    _currentReportPropertyId = propertyId;
     _currentReportTenantId = null;
 
     // Reset report cards & previews
     const reportCard = document.getElementById('rptTenantCard');
     if (reportCard) reportCard.style.display = 'none';
+
+    if (_currentReportType === 'property') {
+      updatePropertyPeriodInfo();
+      window.generateSelectedReport();
+      return;
+    }
 
     const dateCard = document.getElementById('rptDateRangeCard');
     if (dateCard) dateCard.style.display = 'none';
@@ -1024,8 +1408,103 @@
     }
   }
 
+  // ── UI: Property Report Period Controls ───────────────────────────────────
+  window.handlePropertyMonthChange = function (val) {
+    _currentPropMonth = val;
+    _currentPropStartDate = '';
+    _currentPropEndDate = '';
+    const sInput = document.getElementById('rptPropStartDate');
+    const eInput = document.getElementById('rptPropEndDate');
+    if (sInput) sInput.value = '';
+    if (eInput) eInput.value = '';
+    updatePropertyPeriodInfo();
+    window.generateSelectedReport();
+  };
+
+  window.handlePropertyCustomDateChange = function () {
+    const sInput = document.getElementById('rptPropStartDate');
+    const eInput = document.getElementById('rptPropEndDate');
+    _currentPropStartDate = sInput ? sInput.value : '';
+    _currentPropEndDate = eInput ? eInput.value : '';
+    if (_currentPropStartDate || _currentPropEndDate) {
+      _currentPropMonth = '';
+    }
+    updatePropertyPeriodInfo();
+  };
+
+  window.setPropertyQuickRange = function (preset) {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    let startStr = '';
+    let endStr = todayStr;
+    let mVal = '';
+
+    if (preset === 'currentMonth') {
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      mVal = `${y}-${m}`;
+      startStr = `${mVal}-01`;
+      endStr = todayStr;
+    } else if (preset === 'lastMonth') {
+      const d = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      mVal = `${y}-${m}`;
+      startStr = `${mVal}-01`;
+      const lastDay = new Date(y, d.getMonth() + 1, 0).getDate();
+      endStr = `${mVal}-${String(lastDay).padStart(2, '0')}`;
+    } else if (preset === 'last3m') {
+      const d = new Date(today);
+      d.setMonth(d.getMonth() - 3);
+      startStr = d.toISOString().split('T')[0];
+      endStr = todayStr;
+    } else if (preset === 'last6m') {
+      const d = new Date(today);
+      d.setMonth(d.getMonth() - 6);
+      startStr = d.toISOString().split('T')[0];
+      endStr = todayStr;
+    } else if (preset === 'thisYear') {
+      startStr = `${today.getFullYear()}-01-01`;
+      endStr = todayStr;
+    } else if (preset === 'all') {
+      startStr = '2020-01-01';
+      endStr = todayStr;
+    }
+
+    _currentPropMonth = mVal;
+    _currentPropStartDate = startStr;
+    _currentPropEndDate = endStr;
+
+    const mSel = document.getElementById('rptPropertyMonthSelect');
+    if (mSel && mVal) mSel.value = mVal;
+    const sInput = document.getElementById('rptPropStartDate');
+    if (sInput) sInput.value = startStr;
+    const eInput = document.getElementById('rptPropEndDate');
+    if (eInput) eInput.value = endStr;
+
+    updatePropertyPeriodInfo();
+    window.generateSelectedReport();
+  };
+
+  function updatePropertyPeriodInfo() {
+    const info = document.getElementById('rptPropertyPeriodInfo');
+    if (!info) return;
+    if (_currentPropStartDate && _currentPropEndDate) {
+      info.textContent = `Period: ${fmtDate(_currentPropStartDate)} → ${fmtDate(_currentPropEndDate)}`;
+    } else if (_currentPropMonth) {
+      info.textContent = `Month: ${formatMonthReadable(_currentPropMonth)}`;
+    } else {
+      info.textContent = '';
+    }
+  }
+
   // ── UI: Generate Report ─────────────────────────────────────────────────────
   window.generateSelectedReport = function () {
+    if (_currentReportType === 'property') {
+      generatePropertyReport();
+      return;
+    }
+
     if (!_currentReportTenantId) return;
 
     const loading = document.getElementById('rptLoadingIndicator');
@@ -1183,6 +1662,366 @@
     }, 150);
   };
 
+  // ── UI: Generate Property Report ───────────────────────────────────────────
+  function generatePropertyReport() {
+    const loading = document.getElementById('rptLoadingIndicator');
+    const loadingTitle = document.getElementById('rptLoadingTitle');
+    const loadingSub = document.getElementById('rptLoadingSubtitle');
+    const card = document.getElementById('rptTenantCard');
+    const summary = document.getElementById('rptTenantSummary');
+    const expiryBanner = document.getElementById('rptExpiryBanner');
+    const statusBadgeArea = document.getElementById('rptStatusBadgeArea');
+    const previewArea = document.getElementById('rptDetailedPreview');
+    const dlBtns = document.getElementById('rptDownloadBtns');
+    const propSel = document.getElementById('rptPropertySelect');
+
+    const selectedPropId = propSel ? propSel.value : (_currentReportPropertyId || 'all');
+    _currentReportPropertyId = selectedPropId;
+
+    if (loading) {
+      loading.style.display = 'block';
+      if (loadingTitle) loadingTitle.textContent = 'Generating Property-Wise Business Report...';
+      if (loadingSub) loadingSub.textContent = 'Computing unit occupancy, billing history, payment collections, and utility meter readings.';
+    }
+    if (card) card.style.display = 'none';
+
+    setTimeout(() => {
+      const data = assemblePropertyReportData(selectedPropId, _currentPropMonth, _currentPropStartDate, _currentPropEndDate);
+
+      if (loading) loading.style.display = 'none';
+      if (!card) return;
+      card.style.display = 'block';
+
+      if (data.error) {
+        if (summary) summary.innerHTML = `<p style="color:var(--danger);font-weight:600;padding:8px 0;">${data.message}</p>`;
+        if (expiryBanner) expiryBanner.innerHTML = '';
+        if (statusBadgeArea) statusBadgeArea.innerHTML = '';
+        if (previewArea) previewArea.innerHTML = '';
+        if (dlBtns) dlBtns.style.display = 'none';
+        return;
+      }
+
+      if (dlBtns) dlBtns.style.display = 'flex';
+
+      const excelBtnText = document.getElementById('rptExcelBtnText');
+      if (excelBtnText) excelBtnText.textContent = 'Download Property Excel (.xlsx)';
+      const pdfBtnText = document.getElementById('rptPdfBtnText');
+      if (pdfBtnText) pdfBtnText.textContent = 'Download Property PDF';
+
+      if (statusBadgeArea) {
+        statusBadgeArea.innerHTML = `<span class="rpt-badge rpt-badge--property" style="font-size:0.8rem;padding:4px 12px;">PROPERTY REPORT</span>`;
+      }
+
+      if (expiryBanner) {
+        expiryBanner.innerHTML = `
+          <div style="padding:10px 14px;border-radius:var(--radius-sm);background:rgba(79,70,229,0.08);border:1px solid rgba(79,70,229,0.3);color:var(--primary);font-size:0.84rem;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/></svg>
+              <span>Scope: <strong>${data.propertyNames}</strong> &nbsp;|&nbsp; Period: <strong>${data.periodLabel}</strong></span>
+            </div>
+            <span style="font-size:0.78rem;color:var(--text-muted);">Generated: ${fmtDate(new Date().toISOString())}</span>
+          </div>`;
+      }
+
+      const fin = data.summary;
+
+      if (summary) {
+        summary.innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;">
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Property / Scope</span>
+              <div style="font-weight:700;font-size:1.05rem;color:var(--text-main);margin-top:2px;">${data.propertyNames}</div>
+              <div style="font-size:0.82rem;color:var(--text-secondary);">${data.properties.length} propert${data.properties.length === 1 ? 'y' : 'ies'} in scope</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);">${data.periodLabel}</div>
+            </div>
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Occupancy Health</span>
+              <div style="font-weight:700;margin-top:2px;color:var(--text-main);font-size:1.05rem;">
+                ${fin.occupiedRooms} / ${fin.totalRooms} Rooms <span style="font-size:0.85rem;color:#10b981;">(${Math.round(fin.occupancyRate)}%)</span>
+              </div>
+              <div style="font-size:0.82rem;color:${fin.vacantRooms > 0 ? '#f59e0b' : '#10b981'};">${fin.vacantRooms} vacant unit${fin.vacantRooms !== 1 ? 's' : ''}</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);">${fin.totalTenantsCount} active tenants</div>
+            </div>
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Expected Rent</span>
+              <div style="font-weight:700;margin-top:2px;color:var(--text-main);font-size:1.05rem;">${fmt(fin.expectedRent)}</div>
+              <div style="font-size:0.82rem;color:var(--text-secondary);">Rent Received: <strong style="color:#10b981;">${fmt(fin.rentCollected)}</strong></div>
+              <div style="font-size:0.78rem;color:${fin.rentOutstanding > 0 ? '#ef4444' : '#10b981'};">Rent Due: ${fmt(fin.rentOutstanding)}</div>
+            </div>
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Total Collections (All)</span>
+              <div style="font-weight:700;margin-top:2px;color:#10b981;font-size:1.1rem;">${fmt(fin.totalCollected)}</div>
+              <div style="font-size:0.82rem;color:var(--text-secondary);">${fin.totalPaymentsCount} transactions recorded</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);">In selected period</div>
+            </div>
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Total Billed (All Items)</span>
+              <div style="font-weight:700;color:var(--primary);margin-top:2px;font-size:1.05rem;">${fmt(fin.totalBilled)}</div>
+              <div style="font-size:0.82rem;color:var(--text-secondary);">${fin.totalBillsCount} bills generated</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);">Rent, Utilities &amp; Dues</div>
+            </div>
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Total Outstanding Dues</span>
+              <div style="font-weight:700;color:${fin.totalOutstanding > 0 ? '#ef4444' : '#10b981'};margin-top:2px;font-size:1.1rem;">
+                ${fmt(fin.totalOutstanding)}
+              </div>
+              <div style="font-size:0.82rem;color:var(--text-secondary);">${data.outstandingBills.length} unpaid / partial bills</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);">Prev Dues: ${fmt(fin.previousDueTotal)}</div>
+            </div>
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Bill Clearance Rate</span>
+              <div style="font-weight:700;color:var(--text-main);margin-top:2px;font-size:1.05rem;">
+                ${fin.paidBillsCount} Paid &nbsp;|&nbsp; ${fin.partialBillsCount} Partial
+              </div>
+              <div style="font-size:0.82rem;color:${fin.unpaidBillsCount > 0 ? '#ef4444' : '#10b981'};">${fin.unpaidBillsCount} fully unpaid</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);">Out of ${fin.totalBillsCount} total bills</div>
+            </div>
+            <div>
+              <span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Tenant Movement</span>
+              <div style="font-weight:700;color:var(--text-main);margin-top:2px;font-size:1.05rem;">
+                +${fin.newTenantsCount} New &nbsp;|&nbsp; -${fin.vacatedTenantsCount} Vacated
+              </div>
+              <div style="font-size:0.82rem;color:var(--text-secondary);">In reporting period</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);">${fin.totalTenantsCount} current residents</div>
+            </div>
+          </div>`;
+      }
+
+      renderPropertyDetailedPreview(data);
+    }, 150);
+  }
+
+  // ── Render Property Detailed Preview Tabs ──────────────────────────────────
+  function renderPropertyDetailedPreview(data) {
+    const previewArea = document.getElementById('rptDetailedPreview');
+    if (!previewArea) return;
+
+    const { properties, units, tenants, bills, payments, outstandingBills, summary: fin, periodLabel } = data;
+
+    let contentHtml = '';
+
+    if (_activePreviewTab === 'summary') {
+      contentHtml = `
+        <div style="margin-top:14px;">
+          <!-- Occupancy Progress Bar -->
+          <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:14px;margin-bottom:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <span style="font-size:0.82rem;font-weight:700;color:var(--text-main);text-transform:uppercase;">Unit Occupancy Status</span>
+              <span style="font-size:0.85rem;font-weight:700;color:var(--primary);">${fin.occupiedRooms} / ${fin.totalRooms} Units (${Math.round(fin.occupancyRate)}%)</span>
+            </div>
+            <div style="height:10px;background:rgba(239,68,68,0.2);border-radius:999px;overflow:hidden;position:relative;">
+              <div style="height:100%;width:${fin.occupancyRate}%;background:#10b981;border-radius:999px;transition:width 0.3s ease;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-muted);margin-top:6px;">
+              <span style="color:#10b981;">Occupied: ${fin.occupiedRooms} (${Math.round(fin.occupancyRate)}%)</span>
+              <span style="color:#ef4444;">Vacant: ${fin.vacantRooms} (${Math.round(fin.vacancyRate)}%)</span>
+            </div>
+          </div>
+
+          <!-- Collection Categories Table -->
+          <div style="background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:14px;">
+            <div style="font-size:0.82rem;font-weight:700;color:var(--text-main);text-transform:uppercase;margin-bottom:10px;">
+              Collections by Category (Actual Money Received)
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="portal-table" style="width:100%;font-size:0.82rem;">
+                <thead>
+                  <tr><th>Category</th><th>Amount Collected</th><th>Share of Total</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Rent Collection</td><td style="font-weight:700;color:#10b981;">${fmt(fin.collRent)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collRent / fin.collTotal) * 100) : 0}%</td></tr>
+                  <tr><td>Electricity Collection</td><td style="font-weight:600;">${fmt(fin.collElec)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collElec / fin.collTotal) * 100) : 0}%</td></tr>
+                  <tr><td>Water Collection</td><td style="font-weight:600;">${fmt(fin.collWater)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collWater / fin.collTotal) * 100) : 0}%</td></tr>
+                  <tr><td>Parking Collection</td><td style="font-weight:600;">${fmt(fin.collParking)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collParking / fin.collTotal) * 100) : 0}%</td></tr>
+                  <tr><td>Maintenance Collection</td><td style="font-weight:600;">${fmt(fin.collMaint)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collMaint / fin.collTotal) * 100) : 0}%</td></tr>
+                  <tr><td>Other Charges</td><td style="font-weight:600;">${fmt(fin.collOther)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collOther / fin.collTotal) * 100) : 0}%</td></tr>
+                  <tr><td>Previous Dues Cleared</td><td style="font-weight:600;">${fmt(fin.collPrevDue)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collPrevDue / fin.collTotal) * 100) : 0}%</td></tr>
+                  <tr style="font-weight:800;background:var(--bg-surface-elevated);"><td>Total Collections</td><td style="color:#10b981;font-size:0.95rem;">${fmt(fin.collTotal)}</td><td>100%</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>`;
+    } else if (_activePreviewTab === 'units') {
+      if (units.length === 0) {
+        contentHtml = '<p style="font-size:0.85rem;color:var(--text-muted);padding:16px 0;">No units found in the selected property.</p>';
+      } else {
+        let rows = '';
+        units.forEach((u, i) => {
+          const tenant = tenants.find(t => t.unitId === u.id || t.unitNumber === u.unitNumber);
+          const isOccupied = u.status === 'occupied' || Boolean(tenant);
+          rows += `<tr>
+            <td>${i + 1}</td>
+            <td><strong>${u.unitNumber || 'Unit'}</strong></td>
+            <td>${u.floor || '—'} / ${u.type || 'Standard'}</td>
+            <td><span class="${isOccupied ? 'badge-paid' : 'badge-unpaid'}">${isOccupied ? 'OCCUPIED' : 'VACANT'}</span></td>
+            <td><strong>${tenant ? tenant.name : '—'}</strong></td>
+            <td>${tenant ? (tenant.mobile || tenant.mobileNumber || '—') : '—'}</td>
+            <td>${tenant ? fmt(tenant.rent || tenant.monthlyRent) : fmt(u.rent || u.monthlyRent)}</td>
+            <td>${tenant ? fmtDate(tenant.moveIn || tenant.moveInDate) : '—'}</td>
+          </tr>`;
+        });
+        contentHtml = `
+          <div style="overflow-x:auto;margin-top:12px;">
+            <table class="portal-table" style="width:100%;font-size:0.82rem;">
+              <thead>
+                <tr><th>#</th><th>Unit No</th><th>Floor / Type</th><th>Status</th><th>Current Tenant</th><th>Mobile</th><th>Monthly Rent</th><th>Move-in</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+      }
+    } else if (_activePreviewTab === 'bills') {
+      if (bills.length === 0) {
+        contentHtml = '<p style="font-size:0.85rem;color:var(--text-muted);padding:16px 0;">No bills generated for the selected property in this period.</p>';
+      } else {
+        let rows = '';
+        bills.forEach((b, i) => {
+          const tenant = tenants.find(t => t.id === b.tenantId);
+          const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+          const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+          const stLabel = paymentStatusLabel(b);
+          const badgeClass = stLabel === 'PAID' ? 'badge-paid' : stLabel === 'PARTIALLY PAID' ? 'badge-partial' : 'badge-unpaid';
+          rows += `<tr>
+            <td>${i + 1}</td>
+            <td><strong>${b.billNumber || '—'}</strong></td>
+            <td>${tenantName}</td>
+            <td>${unitNo}</td>
+            <td>${formatMonthReadable(b.billingMonth)}</td>
+            <td>${fmtDate(b.dueDate || getBillDate(b))}</td>
+            <td>${fmt(b.rent)}</td>
+            <td>${fmt(b.electricityCharge)}</td>
+            <td>${fmt(b.waterCharge)}</td>
+            <td style="font-weight:700;">${fmt(b.totalAmount)}</td>
+            <td style="color:#10b981;font-weight:700;">${fmt(b.paidAmount)}</td>
+            <td style="color:${Number(b.remainingAmount) > 0 ? '#ef4444' : '#10b981'};font-weight:700;">${fmt(b.remainingAmount)}</td>
+            <td><span class="${badgeClass}">${stLabel}</span></td>
+          </tr>`;
+        });
+        contentHtml = `
+          <div style="overflow-x:auto;margin-top:12px;">
+            <table class="portal-table" style="width:100%;font-size:0.82rem;">
+              <thead>
+                <tr><th>#</th><th>Bill No</th><th>Tenant</th><th>Unit</th><th>Month</th><th>Due Date</th><th>Rent</th><th>Electricity</th><th>Water</th><th>Total</th><th>Paid</th><th>Due</th><th>Status</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+      }
+    } else if (_activePreviewTab === 'payments') {
+      if (payments.length === 0) {
+        contentHtml = '<p style="font-size:0.85rem;color:var(--text-muted);padding:16px 0;">No payment transactions recorded in this period.</p>';
+      } else {
+        let rows = '';
+        payments.forEach((p, i) => {
+          const tenant = tenants.find(t => t.id === p.tenantId);
+          const tenantName = tenant ? tenant.name : (p.tenantName || 'Tenant');
+          let billInfo = '—';
+          if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+            billInfo = p.allocations.map(a => `${a.type === 'advance' ? 'Advance' : 'Bill'} (₹${a.amount})`).join(', ');
+          } else if (p.billId) {
+            billInfo = p.billId === 'advance' ? 'Advance' : 'Direct Bill';
+          }
+          rows += `<tr>
+            <td>${i + 1}</td>
+            <td>${fmtDate(getPaymentDate(p))}</td>
+            <td><strong>${tenantName}</strong></td>
+            <td>${billInfo}</td>
+            <td style="font-weight:700;color:#10b981;">${fmt(p.amount || p.amountPaid)}</td>
+            <td>${paymentMethodLabel(p.paymentMethod || p.mode)}</td>
+            <td style="font-family:monospace;font-size:0.75rem;">${p.transactionId || p.referenceId || '—'}</td>
+            <td><span class="badge-paid">${(p.status || 'approved').toUpperCase()}</span></td>
+          </tr>`;
+        });
+        contentHtml = `
+          <div style="overflow-x:auto;margin-top:12px;">
+            <table class="portal-table" style="width:100%;font-size:0.82rem;">
+              <thead>
+                <tr><th>#</th><th>Date</th><th>Tenant</th><th>Allocation</th><th>Amount</th><th>Method</th><th>Txn / Ref ID</th><th>Status</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+      }
+    } else if (_activePreviewTab === 'utilities') {
+      let rows = '';
+      bills.forEach((b, i) => {
+        const tenant = tenants.find(t => t.id === b.tenantId);
+        const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+        const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+        const eDates = getMeterReadingDates(b, bills, tenant);
+        rows += `<tr>
+          <td>${i + 1}</td>
+          <td>${tenantName} (Unit ${unitNo})</td>
+          <td>Electricity</td>
+          <td>${b.previousMeterReading != null ? b.previousMeterReading : '—'}</td>
+          <td>${formatDDMMYYYY(eDates.prevDate) || '—'}</td>
+          <td>${b.currentMeterReading != null ? b.currentMeterReading : '—'}</td>
+          <td>${formatDDMMYYYY(eDates.currDate) || '—'}</td>
+          <td style="font-weight:600;">${b.electricityUnits || 0} u</td>
+          <td>${b.electricityRate ? `₹${b.electricityRate}/u` : (b.electricityFixedAmount ? `Fixed ₹${b.electricityFixedAmount}` : '—')}</td>
+          <td style="font-weight:700;color:var(--text-main);">${fmt(b.electricityCharge)}</td>
+        </tr>`;
+      });
+      contentHtml = bills.length === 0
+        ? '<p style="font-size:0.85rem;color:var(--text-muted);padding:16px 0;">No utility records in this period.</p>'
+        : `<div style="overflow-x:auto;margin-top:12px;">
+            <table class="portal-table" style="width:100%;font-size:0.82rem;">
+              <thead>
+                <tr><th>#</th><th>Tenant & Unit</th><th>Utility</th><th>Prev Reading</th><th>Prev Date</th><th>Curr Reading</th><th>Curr Date</th><th>Units</th><th>Rate / Plan</th><th>Total Charge</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+    } else if (_activePreviewTab === 'dues') {
+      if (outstandingBills.length === 0) {
+        contentHtml = '<p style="font-size:0.85rem;color:#10b981;font-weight:600;padding:16px 0;">✓ Outstanding balance zero! All bills are fully paid in this period.</p>';
+      } else {
+        let rows = '';
+        outstandingBills.forEach((b, i) => {
+          const tenant = tenants.find(t => t.id === b.tenantId);
+          const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+          const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+          const overdue = getDaysOverdue(b.dueDate);
+          rows += `<tr>
+            <td>${i + 1}</td>
+            <td><strong>${tenantName}</strong></td>
+            <td>Unit ${unitNo}</td>
+            <td>${b.billNumber || '—'}</td>
+            <td>${formatMonthReadable(b.billingMonth)}</td>
+            <td>${fmtDate(b.dueDate)}</td>
+            <td style="color:${overdue > 0 ? '#ef4444' : 'var(--text-secondary)'};font-weight:600;">${overdue > 0 ? `${overdue} days` : 'Not overdue'}</td>
+            <td>${fmt(b.totalAmount)}</td>
+            <td style="color:#10b981;">${fmt(b.paidAmount)}</td>
+            <td style="color:#ef4444;font-weight:700;">${fmt(b.remainingAmount)}</td>
+          </tr>`;
+        });
+        contentHtml = `
+          <div style="overflow-x:auto;margin-top:12px;">
+            <table class="portal-table" style="width:100%;font-size:0.82rem;">
+              <thead>
+                <tr><th>#</th><th>Tenant</th><th>Unit</th><th>Bill No</th><th>Month</th><th>Due Date</th><th>Overdue</th><th>Total Bill</th><th>Paid</th><th>Remaining Due</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+      }
+    }
+
+    previewArea.innerHTML = `
+      <div style="border-top:1px solid var(--border-subtle);margin-top:16px;padding-top:14px;">
+        <div style="display:flex;gap:4px;border-bottom:1px solid var(--border-subtle);margin-bottom:12px;overflow-x:auto;">
+          <button type="button" class="rpt-preview-tab-btn ${_activePreviewTab === 'summary' ? 'active' : ''}" onclick="switchReportPreviewTab('summary')">Summary &amp; Metrics</button>
+          <button type="button" class="rpt-preview-tab-btn ${_activePreviewTab === 'units' ? 'active' : ''}" onclick="switchReportPreviewTab('units')">Unit Roster (${units.length})</button>
+          <button type="button" class="rpt-preview-tab-btn ${_activePreviewTab === 'bills' ? 'active' : ''}" onclick="switchReportPreviewTab('bills')">Bills History (${bills.length})</button>
+          <button type="button" class="rpt-preview-tab-btn ${_activePreviewTab === 'payments' ? 'active' : ''}" onclick="switchReportPreviewTab('payments')">Payments (${payments.length})</button>
+          <button type="button" class="rpt-preview-tab-btn ${_activePreviewTab === 'utilities' ? 'active' : ''}" onclick="switchReportPreviewTab('utilities')">Electricity &amp; Water</button>
+          <button type="button" class="rpt-preview-tab-btn ${_activePreviewTab === 'dues' ? 'active' : ''}" onclick="switchReportPreviewTab('dues')">Outstanding Dues (${outstandingBills.length})</button>
+        </div>
+        ${contentHtml}
+      </div>`;
+  }
+
   // ── Render Active Tenant Interactive Preview Tabs ──────────────────────────
   function renderActiveTenantDetailedPreview(data) {
     const previewArea = document.getElementById('rptDetailedPreview');
@@ -1317,13 +2156,1053 @@
 
   window.switchReportPreviewTab = function (tab) {
     _activePreviewTab = tab;
+    if (_currentReportType === 'property') {
+      const data = assemblePropertyReportData(_currentReportPropertyId, _currentPropMonth, _currentPropStartDate, _currentPropEndDate);
+      if (data.ok) {
+        renderPropertyDetailedPreview(data);
+      }
+      return;
+    }
     const data = assembleReportData(_currentReportTenantId, _currentReportType, _currentStartDate, _currentEndDate);
     if (data.ok && data.reportType === 'active') {
       renderActiveTenantDetailedPreview(data);
     }
   };
 
-  // ── Excel Generation ────────────────────────────────────────────────────────
+  // ── Property Excel Generation ───────────────────────────────────────────────
+  window.downloadPropertyExcel = function () {
+    const data = assemblePropertyReportData(_currentReportPropertyId, _currentPropMonth, _currentPropStartDate, _currentPropEndDate);
+    if (data.error) { alert(data.message); return; }
+
+    if (typeof XLSX === 'undefined') {
+      alert('Excel library not loaded. Please check your internet connection and try again.');
+      return;
+    }
+
+    const exportBtn = document.getElementById('rptExcelBtn');
+    const origHtml = exportBtn ? exportBtn.innerHTML : '';
+    if (exportBtn) {
+      exportBtn.disabled = true;
+      exportBtn.innerHTML = `<span>Exporting Excel...</span>`;
+    }
+
+    try {
+      const properties = data.properties;
+      const units = data.units;
+      const tenants = data.tenants;
+      const filteredBills = data.bills;
+      const filteredPayments = data.payments;
+      const filteredTenants = data.tenants;
+      const newTenantsList = data.newTenants;
+      const vacatedTenantsList = data.vacatedTenants;
+      const outstandingBills = data.outstandingBills;
+      const fin = data.summary;
+      const monthStr = data.monthStr || '';
+      const monthLabel = data.periodLabel;
+      const selectedPropertyNames = data.propertyNames;
+      const propertyId = data.propertyId;
+
+      // Helper cell functions matching mobile app
+      const currencyCell = (v) => ({ v: Number(v) || 0, t: 'n', z: '"₹"#,##,##0' });
+      const percentCell = (v) => ({ v: (Number(v) || 0) / 100, t: 'n', z: '0%' });
+      const numCell = (v) => ({ v: Number(v) || 0, t: 'n' });
+      const strCell = (v) => ({ v: String(v == null ? '' : v), t: 's' });
+      const dateCell = (dStr) => ({ v: formatExcelDate(dStr), t: 's' });
+
+      // ── 1. Summary Sheet ──
+      const summaryRows = [
+        [strCell('RENTORA — MONTHLY PROPERTY REPORT'), strCell('')],
+        [],
+        [strCell('Property:'), strCell(selectedPropertyNames)],
+        [strCell('Report Month / Period:'), strCell(monthLabel)],
+        [strCell('Report Generated Date:'), strCell(formatExcelDate(new Date().toISOString().split('T')[0]))],
+        [],
+        [strCell('OVERALL SUMMARY'), strCell('')],
+        [strCell('Expected Rent:'), currencyCell(fin.expectedRent)],
+        [strCell('Collected:'), currencyCell(fin.totalCollected)],
+        [strCell('Outstanding:'), currencyCell(fin.totalOutstanding)],
+        [strCell('New Tenants:'), numCell(fin.newTenantsCount)],
+        [strCell('Vacated Tenants:'), numCell(fin.vacatedTenantsCount)],
+        [strCell('Occupied Rooms:'), strCell(`${fin.occupiedRooms} / ${fin.totalRooms}`)],
+        [strCell('Vacant Rooms:'), strCell(`${fin.vacantRooms} / ${fin.totalRooms}`)],
+        [strCell('Occupancy:'), percentCell(fin.occupancyRate)],
+        [strCell('Vacancy:'), percentCell(fin.vacancyRate)],
+        [],
+        [strCell('RENT DETAILS'), strCell('')],
+        [strCell('Total Expected Rent:'), currencyCell(fin.expectedRent)],
+        [strCell('Total Rent Received:'), currencyCell(fin.rentCollected)],
+        [strCell('Total Rent Due:'), currencyCell(fin.rentOutstanding)],
+        [strCell('Previous Due:'), currencyCell(fin.previousDueTotal)],
+        [strCell('Current Month Due:'), currencyCell(fin.totalOutstanding)],
+        [strCell('Total Amount Collected:'), currencyCell(fin.totalCollected)],
+        [strCell('Total Outstanding:'), currencyCell(fin.totalOutstanding)],
+        [],
+        [strCell('BILL STATUS SUMMARY'), strCell('')],
+        [strCell('Paid Bills:'), numCell(fin.paidBillsCount)],
+        [strCell('Partially Paid Bills:'), numCell(fin.partialBillsCount)],
+        [strCell('Unpaid Bills:'), numCell(fin.unpaidBillsCount)],
+        [],
+        [strCell('PROPERTY SUMMARY DETAILS'), strCell('')]
+      ];
+
+      if (propertyId === 'all') {
+        summaryRows.push([
+          strCell('Property Name'), strCell('Type'), strCell('Address'), strCell('Total Units'), strCell('Occupied'), strCell('Vacant'), strCell('Active Tenants'), strCell('Vacated')
+        ]);
+        properties.forEach(p => {
+          const pUnits = units.filter(u => u.propertyId === p.id);
+          const pTotal = p.totalUnits || pUnits.length;
+          const pOccupied = pUnits.filter(u => u.status === 'occupied').length;
+          const pVacant = Math.max(0, pTotal - pOccupied);
+          const pActiveTenants = tenants.filter(t => t.propertyId === p.id && t.status === 'active').length;
+          const pVacatedTenants = tenants.filter(t => t.propertyId === p.id && t.status === 'vacated').length;
+          summaryRows.push([
+            strCell(p.name), strCell(p.type || 'Property'), strCell(p.address || ''), numCell(pTotal), numCell(pOccupied), numCell(pVacant), numCell(pActiveTenants), numCell(pVacatedTenants)
+          ]);
+        });
+      } else {
+        const p = properties[0];
+        if (p) {
+          const pUnits = units.filter(u => u.propertyId === p.id);
+          const pTotal = p.totalUnits || pUnits.length;
+          const pOccupied = pUnits.filter(u => u.status === 'occupied').length;
+          const pVacant = Math.max(0, pTotal - pOccupied);
+          const pActiveTenants = tenants.filter(t => t.propertyId === p.id && t.status === 'active').length;
+          const pVacatedTenants = tenants.filter(t => t.propertyId === p.id && t.status === 'vacated').length;
+          summaryRows.push([strCell('Property Name:'), strCell(p.name)]);
+          summaryRows.push([strCell('Property Type:'), strCell(p.type || 'Property')]);
+          summaryRows.push([strCell('Property Address:'), strCell(p.address || '')]);
+          summaryRows.push([strCell('Total Rooms/Units:'), numCell(pTotal)]);
+          summaryRows.push([strCell('Occupied Rooms:'), numCell(pOccupied)]);
+          summaryRows.push([strCell('Vacant Rooms:'), numCell(pVacant)]);
+          summaryRows.push([strCell('Active Tenants:'), numCell(pActiveTenants)]);
+          summaryRows.push([strCell('Vacated Tenants:'), numCell(pVacatedTenants)]);
+        }
+      }
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+
+      // ── 2. Tenant Details Sheet ──
+      const tenantRows = [
+        [strCell('Tenant Name'), strCell('Mobile Number'), strCell('Property'), strCell('Monthly Rent'), strCell('Move-in Date')]
+      ];
+      filteredTenants.forEach(t => {
+        const propName = properties.find(p => p.id === t.propertyId)?.name || selectedPropertyNames;
+        tenantRows.push([
+          strCell(t.name),
+          strCell(t.mobile || t.mobileNumber || ''),
+          strCell(propName),
+          currencyCell(t.rent || t.monthlyRent || 0),
+          dateCell(t.moveIn || t.moveInDate)
+        ]);
+      });
+      const wsTenantDetails = XLSX.utils.aoa_to_sheet(tenantRows);
+
+      // ── 3. Bills Sheet ──
+      const billRows = [
+        [strCell('Bill Number'), strCell('Tenant Name'), strCell('Rent'), strCell('Previous Due'), strCell('Total Payable'), strCell('Paid Amount'), strCell('Remaining Due'), strCell('Payment Status')]
+      ];
+      filteredBills.forEach(b => {
+        const tenantName = tenants.find(t => t.id === b.tenantId)?.name || b.tenantName || 'Tenant';
+        billRows.push([
+          strCell(b.billNumber || '—'),
+          strCell(tenantName),
+          currencyCell(b.rent || 0),
+          currencyCell(b.previousDue || 0),
+          currencyCell(b.totalAmount || 0),
+          currencyCell(b.paidAmount || 0),
+          currencyCell(b.remainingAmount || 0),
+          strCell(paymentStatusLabel(b))
+        ]);
+      });
+      const wsBills = XLSX.utils.aoa_to_sheet(billRows);
+
+      // ── 4. Payments Sheet ──
+      const paymentRows = [
+        [strCell('Payment Date'), strCell('Tenant Name'), strCell('Bill Number'), strCell('Amount Paid'), strCell('Payment Method'), strCell('Transaction ID'), strCell('Payment Status')]
+      ];
+      filteredPayments.forEach(p => {
+        const tenantName = tenants.find(t => t.id === p.tenantId)?.name || p.tenantName || 'Tenant';
+        let billNo = '-';
+        let billStatus = (p.status || 'approved').toUpperCase();
+
+        if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+          billNo = p.allocations.map(a => {
+            if (a.type === 'advance') return `Advance (₹${a.amount})`;
+            const b = filteredBills.find(tb => tb.id === a.billId);
+            return `${b ? b.billNumber : a.billId} (₹${a.amount})`;
+          }).join(', ');
+        } else {
+          const bill = filteredBills.find(b => b.id === p.billId);
+          billNo = bill ? bill.billNumber : (p.billId === 'advance' ? 'Advance Payment' : '-');
+          if (bill) billStatus = paymentStatusLabel(bill);
+        }
+
+        paymentRows.push([
+          dateCell(getPaymentDate(p)),
+          strCell(tenantName),
+          strCell(billNo),
+          currencyCell(Number(p.amount) || Number(p.amountPaid) || 0),
+          strCell(paymentMethodLabel(p.paymentMethod || p.mode)),
+          strCell(p.transactionId || p.referenceId || ''),
+          strCell(billStatus)
+        ]);
+      });
+      const wsPayments = XLSX.utils.aoa_to_sheet(paymentRows);
+
+      // ── 5. New Tenants Sheet ──
+      const newTenantRows = [
+        [strCell('Total New Tenants:'), numCell(newTenantsList.length)],
+        [],
+        [strCell('Tenant Name'), strCell('Room'), strCell('Move-in Date'), strCell('Monthly Rent')]
+      ];
+      newTenantsList.forEach(t => {
+        const unitNo = units.find(u => u.id === t.unitId)?.unitNumber || t.unitNumber || '-';
+        newTenantRows.push([
+          strCell(t.name),
+          strCell(unitNo),
+          dateCell(t.moveIn || t.moveInDate),
+          currencyCell(t.rent || t.monthlyRent || 0)
+        ]);
+      });
+      const wsNewTenants = XLSX.utils.aoa_to_sheet(newTenantRows);
+
+      // ── 6. Vacated Tenants Sheet ──
+      const vacatedTenantRows = [
+        [strCell('Total Vacated Tenants:'), numCell(vacatedTenantsList.length)],
+        [],
+        [strCell('Tenant Name'), strCell('Room'), strCell('Move-in Date'), strCell('Move-out Date'), strCell('Rent')]
+      ];
+      vacatedTenantsList.forEach(t => {
+        const unitNo = units.find(u => u.id === t.unitId)?.unitNumber || t.unitNumber || '-';
+        vacatedTenantRows.push([
+          strCell(t.name),
+          strCell(unitNo),
+          dateCell(t.moveIn || t.moveInDate),
+          dateCell(t.moveOut || t.moveOutDate),
+          currencyCell(t.rent || t.monthlyRent || 0)
+        ]);
+      });
+      const wsVacatedTenants = XLSX.utils.aoa_to_sheet(vacatedTenantRows);
+
+      // ── 7. Outstanding Sheet ──
+      const outstandingRows = [
+        [strCell('Tenant'), strCell('Room'), strCell('Total Bill'), strCell('Paid'), strCell('Due'), strCell('Due Since'), strCell('Due Date'), strCell('Days Overdue'), strCell('Status')]
+      ];
+      outstandingBills.forEach(b => {
+        const tenant = tenants.find(t => t.id === b.tenantId);
+        const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+        const unitNo = units.find(u => u.id === b.unitId)?.unitNumber || b.unitNumber || '-';
+        outstandingRows.push([
+          strCell(tenantName),
+          strCell(unitNo),
+          currencyCell(b.totalAmount || 0),
+          currencyCell(b.paidAmount || 0),
+          currencyCell(b.remainingAmount || 0),
+          strCell(formatMonthReadable(b.billingMonth)),
+          dateCell(b.dueDate),
+          numCell(getDaysOverdue(b.dueDate)),
+          strCell(paymentStatusLabel(b))
+        ]);
+      });
+      const wsOutstanding = XLSX.utils.aoa_to_sheet(outstandingRows);
+
+      // ── 8. Electricity Sheet ──
+      const electricityRows = [
+        [strCell('Tenant Name'), strCell('Property'), strCell('Billing Type'), strCell('Previous Reading'), strCell('Prev Reading Date'), strCell('Current Reading'), strCell('Curr Reading Date'), strCell('Total Units'), strCell('Total Days'), strCell('Rate Per Unit'), strCell('Fixed Monthly Amount'), strCell('Electricity Amount')]
+      ];
+      filteredBills.forEach(b => {
+        const tenant = tenants.find(t => t.id === b.tenantId);
+        const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+        const propName = properties.find(p => p.id === b.propertyId)?.name || selectedPropertyNames;
+        const eType = b.electricityBillType || (b.electricityCharge > 0 ? (b.electricityUnits ? 'perUnit' : 'fixed') : 'none');
+
+        if (eType === 'fixed') {
+          electricityRows.push([
+            strCell(tenantName), strCell(propName), strCell('Fixed'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), currencyCell(b.electricityFixedAmount || b.electricityCharge || 0), currencyCell(b.electricityCharge || 0)
+          ]);
+        } else if (eType === 'none') {
+          electricityRows.push([
+            strCell(tenantName), strCell(propName), strCell('None'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), currencyCell(0)
+          ]);
+        } else {
+          const eDates = getMeterReadingDates(b, filteredBills, tenant);
+          let daysText = '-';
+          if (eDates.currDate && eDates.prevDate) {
+            const start = new Date(eDates.prevDate);
+            const end = new Date(eDates.currDate);
+            const diff = end.getTime() - start.getTime();
+            const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+            if (days >= 0) daysText = String(days);
+          }
+          electricityRows.push([
+            strCell(tenantName),
+            strCell(propName),
+            strCell('Per Unit'),
+            numCell(b.previousMeterReading || 0),
+            dateCell(eDates.prevDate),
+            numCell(b.currentMeterReading || 0),
+            dateCell(eDates.currDate),
+            numCell(b.electricityUnits || 0),
+            strCell(daysText),
+            currencyCell(b.electricityRate || 0),
+            strCell('-'),
+            currencyCell(b.electricityCharge || 0)
+          ]);
+        }
+      });
+      const wsElectricity = XLSX.utils.aoa_to_sheet(electricityRows);
+
+      // ── 9. Water Sheet ──
+      const waterRows = [
+        [strCell('Tenant Name'), strCell('Property'), strCell('Billing Type'), strCell('Previous Reading'), strCell('Prev Reading Date'), strCell('Current Reading'), strCell('Curr Reading Date'), strCell('Total Units'), strCell('Total Days'), strCell('Rate Per Unit'), strCell('Fixed Monthly Amount'), strCell('Water Amount')]
+      ];
+      filteredBills.forEach(b => {
+        const tenant = tenants.find(t => t.id === b.tenantId);
+        const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+        const propName = properties.find(p => p.id === b.propertyId)?.name || selectedPropertyNames;
+        const wType = b.waterBillType || (b.waterCharge > 0 ? 'fixed' : 'none');
+
+        if (wType === 'fixed') {
+          waterRows.push([
+            strCell(tenantName), strCell(propName), strCell('Fixed'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), currencyCell(b.waterFixedAmount || b.waterCharge || 0), currencyCell(b.waterCharge || 0)
+          ]);
+        } else if (wType === 'none') {
+          waterRows.push([
+            strCell(tenantName), strCell(propName), strCell('None'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), strCell('-'), currencyCell(0)
+          ]);
+        } else {
+          waterRows.push([
+            strCell(tenantName), strCell(propName), strCell('Per Unit'), numCell(b.previousWaterReading || 0), dateCell(b.previousMeterReadingDate), numCell(b.currentWaterReading || 0), dateCell(b.currentMeterReadingDate), numCell(b.waterUnits || 0), strCell('-'), currencyCell(b.waterRatePerUnit || 0), strCell('-'), currencyCell(b.waterCharge || 0)
+          ]);
+        }
+      });
+      const wsWater = XLSX.utils.aoa_to_sheet(waterRows);
+
+      // ── 10. Occupancy Sheet ──
+      const occupancyRows = [
+        [strCell('Occupancy Metrics'), strCell('Value')],
+        [strCell('Total Units:'), numCell(fin.totalRooms)],
+        [strCell('Occupied Units:'), numCell(fin.occupiedRooms)],
+        [strCell('Vacant Units:'), numCell(fin.vacantRooms)],
+        [strCell('Occupancy Rate:'), percentCell(fin.occupancyRate)],
+        [strCell('Vacancy Rate:'), percentCell(fin.vacancyRate)]
+      ];
+      const wsOccupancy = XLSX.utils.aoa_to_sheet(occupancyRows);
+
+      // ── 11. Date-wise Collection Sheet ──
+      const dateMap = {};
+      filteredPayments.forEach(p => {
+        const dExcel = formatExcelDate(getPaymentDate(p));
+        dateMap[dExcel] = (dateMap[dExcel] || 0) + (Number(p.amount) || Number(p.amountPaid) || 0);
+      });
+      const dateWiseRows = [
+        [strCell('Date'), strCell('Amount Collected')]
+      ];
+      const sortedDates = Object.keys(dateMap).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      sortedDates.forEach(d => {
+        dateWiseRows.push([strCell(d), currencyCell(dateMap[d])]);
+      });
+      const wsDateWise = XLSX.utils.aoa_to_sheet(dateWiseRows);
+
+      // ── 12. Collection Summary Sheet ──
+      const collectionSummaryRows = [
+        [strCell('Category'), strCell('Amount Collected')],
+        [strCell('Rent Collection'), currencyCell(fin.collRent)],
+        [strCell('Electricity Collection'), currencyCell(fin.collElec)],
+        [strCell('Water Collection'), currencyCell(fin.collWater)],
+        [strCell('Parking Collection'), currencyCell(fin.collParking)],
+        [strCell('Maintenance'), currencyCell(fin.collMaint)],
+        [strCell('Other Charges'), currencyCell(fin.collOther)],
+        [strCell('Previous Due Collection'), currencyCell(fin.collPrevDue)],
+        [],
+        [strCell('Total Collection'), currencyCell(fin.collTotal)]
+      ];
+      const wsCollectionSummary = XLSX.utils.aoa_to_sheet(collectionSummaryRows);
+
+      // Build Workbook
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+      XLSX.utils.book_append_sheet(wb, wsTenantDetails, 'Tenant Details');
+      XLSX.utils.book_append_sheet(wb, wsBills, 'Bills');
+      XLSX.utils.book_append_sheet(wb, wsPayments, 'Payments');
+      XLSX.utils.book_append_sheet(wb, wsNewTenants, 'New Tenants');
+      XLSX.utils.book_append_sheet(wb, wsVacatedTenants, 'Vacated Tenants');
+      XLSX.utils.book_append_sheet(wb, wsOutstanding, 'Outstanding');
+      XLSX.utils.book_append_sheet(wb, wsElectricity, 'Electricity');
+      XLSX.utils.book_append_sheet(wb, wsWater, 'Water');
+      XLSX.utils.book_append_sheet(wb, wsOccupancy, 'Occupancy');
+      XLSX.utils.book_append_sheet(wb, wsDateWise, 'Date-wise Collection');
+      XLSX.utils.book_append_sheet(wb, wsCollectionSummary, 'Collection Summary');
+
+      const safeName = String(selectedPropertyNames).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safeMonth = String(monthLabel).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Rentora_PropertyReport_${safeName}_${safeMonth}.xlsx`;
+
+      XLSX.writeFile(wb, filename);
+    } catch (err) {
+      console.error('Property Excel generation error:', err);
+      alert('Excel export failed: ' + (err.message || 'Please try again.'));
+    } finally {
+      if (exportBtn) {
+        exportBtn.disabled = false;
+        exportBtn.innerHTML = origHtml;
+      }
+    }
+  };
+
+  // ── Property PDF Generation ─────────────────────────────────────────────────
+  window.downloadPropertyPDF = async function () {
+    const data = assemblePropertyReportData(_currentReportPropertyId, _currentPropMonth, _currentPropStartDate, _currentPropEndDate);
+    if (data.error) { alert(data.message); return; }
+
+    if (typeof html2pdf === 'undefined') {
+      alert('PDF library not loaded. Please check your internet connection and try again.');
+      return;
+    }
+
+    const exportBtn = document.getElementById('rptPdfBtn');
+    const origBtnHtml = exportBtn ? exportBtn.innerHTML : '';
+    if (exportBtn) {
+      exportBtn.disabled = true;
+      exportBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-right: 6px;"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>Generating PDF...</span>`;
+    }
+
+    const { properties, units, tenants, bills, payments, outstandingBills, summary: fin, periodLabel, propertyNames, settings } = data;
+    const ownerName = settings.ownerName || settings.businessName || 'Landlord';
+    const businessName = settings.businessName || propertyNames || 'RENTORA PROPERTIES';
+    const address = settings.address || (properties[0]?.address) || '';
+    const phone = settings.phone || '';
+
+    const commonCss = `
+      *, *::before, *::after { box-sizing: border-box !important; }
+      .pdf-content-wrapper {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+        color: #111827 !important;
+        font-size: 8.8px !important;
+        line-height: 1.38 !important;
+        background: #ffffff !important;
+        width: 1040px !important;
+        max-width: 1040px !important;
+        margin: 0 auto !important;
+        padding: 4px 8px !important;
+        box-sizing: border-box !important;
+      }
+      .pdf-header {
+        border-bottom: 2px solid #4F46E5 !important;
+        padding-bottom: 8px !important;
+        margin-bottom: 10px !important;
+      }
+      .pdf-header-table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+      }
+      .pdf-header-table td {
+        border: none !important;
+        padding: 0 !important;
+        vertical-align: top !important;
+      }
+      .pdf-mini-header {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        border-bottom: 1.5px solid #4F46E5 !important;
+        padding-bottom: 4px !important;
+        margin-bottom: 8px !important;
+      }
+      .pdf-title {
+        font-size: 15px !important;
+        font-weight: 800 !important;
+        color: #1e1b4b !important;
+        letter-spacing: -0.2px !important;
+        margin: 0 !important;
+      }
+      .pdf-subtitle {
+        font-size: 8.5px !important;
+        color: #4b5563 !important;
+        margin-top: 2px !important;
+      }
+      .pdf-badge {
+        display: inline-block !important;
+        padding: 2px 7px !important;
+        border-radius: 9999px !important;
+        font-size: 7.5px !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.4px !important;
+        border: 1px solid #c7d2fe !important;
+        background: #eef2ff !important;
+        color: #3730a3 !important;
+      }
+      .pdf-section-title {
+        font-size: 10px !important;
+        font-weight: 800 !important;
+        color: #1f2937 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.4px !important;
+        border-left: 3px solid #4F46E5 !important;
+        padding-left: 6px !important;
+        margin: 10px 0 6px 0 !important;
+      }
+      .pdf-grid-table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin-bottom: 10px !important;
+        border: 1px solid #d1d5db !important;
+      }
+      .pdf-grid-table th, .pdf-grid-table td {
+        border: 1px solid #d1d5db !important;
+        padding: 4px 6px !important;
+        font-size: 8.5px !important;
+      }
+      .pdf-grid-table th {
+        background: #f3f4f6 !important;
+        font-weight: 700 !important;
+        color: #374151 !important;
+        text-align: left !important;
+        width: 25% !important;
+      }
+      .pdf-grid-table td {
+        color: #111827 !important;
+        width: 25% !important;
+      }
+      .pdf-table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin-bottom: 8px !important;
+        font-size: 8px !important;
+        table-layout: fixed !important;
+      }
+      .pdf-table th {
+        background: #1e1b4b !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        padding: 4px 5px !important;
+        text-align: left !important;
+        border: 1px solid #1e1b4b !important;
+        font-size: 7.8px !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+      }
+      .pdf-table td {
+        border: 1px solid #e5e7eb !important;
+        padding: 3.5px 5px !important;
+        color: #1f2937 !important;
+        font-size: 7.8px !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+      }
+      .pdf-table tr:nth-child(even) td {
+        background: #f9fafb !important;
+      }
+      .pdf-page-break {
+        page-break-before: always !important;
+        break-before: page !important;
+        height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      .badge-paid {
+        background: #dcfce7 !important;
+        color: #15803d !important;
+        font-weight: 700 !important;
+        padding: 1px 4px !important;
+        border-radius: 3px !important;
+        font-size: 7px !important;
+      }
+      .badge-partial {
+        background: #fef3c7 !important;
+        color: #b45309 !important;
+        font-weight: 700 !important;
+        padding: 1px 4px !important;
+        border-radius: 3px !important;
+        font-size: 7px !important;
+      }
+      .badge-unpaid {
+        background: #fee2e2 !important;
+        color: #b91c1c !important;
+        font-weight: 700 !important;
+        padding: 1px 4px !important;
+        border-radius: 3px !important;
+        font-size: 7px !important;
+      }
+    `;
+
+    function chunkRows(rows, size) {
+      const chunks = [];
+      for (let i = 0; i < rows.length; i += size) {
+        chunks.push(rows.slice(i, i + size));
+      }
+      return chunks;
+    }
+
+    const safeName = String(propertyNames).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeMonth = String(periodLabel).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `Rentora_PropertyReport_${safeName}_${safeMonth}.pdf`;
+
+    // ── PAGE 1: Header, Property Details, Occupancy & Financial Summary ──
+    const page1Html = `
+      <div class="pdf-header">
+        <table class="pdf-header-table">
+          <tr>
+            <td style="width:65%;">
+              <div class="pdf-title">RENTORA &mdash; PROPERTY PERFORMANCE &amp; BUSINESS REPORT</div>
+              <div class="pdf-subtitle">
+                <strong>${businessName}</strong> &bull; Landlord: ${ownerName} ${phone ? `&bull; ${phone}` : ''}
+                ${address ? `<br>${address}` : ''}
+              </div>
+            </td>
+            <td style="width:35%;text-align:right;">
+              <span class="pdf-badge">PORTFOLIO BUSINESS REPORT</span>
+              <div style="font-size:8px;color:#6b7280;margin-top:4px;">
+                Scope: <strong>${propertyNames}</strong><br>
+                Period: <strong>${periodLabel}</strong><br>
+                Generated: <strong>${fmtDate(new Date().toISOString())}</strong>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="pdf-section-title">1. Executive Overview &amp; Occupancy Statistics</div>
+      <table class="pdf-grid-table">
+        <tr>
+          <th>Scope of Report</th>
+          <td><strong>${propertyNames}</strong> (${properties.length} propert${properties.length === 1 ? 'y' : 'ies'})</td>
+          <th>Audit Period</th>
+          <td><strong>${periodLabel}</strong></td>
+        </tr>
+        <tr>
+          <th>Total Units / Rooms</th>
+          <td><strong>${fin.totalRooms} Units</strong></td>
+          <th>Occupied Units</th>
+          <td><strong style="color:#15803d;">${fin.occupiedRooms} Units (${Math.round(fin.occupancyRate)}%)</strong></td>
+        </tr>
+        <tr>
+          <th>Vacant Units</th>
+          <td><strong style="color:${fin.vacantRooms > 0 ? '#b91c1c' : '#15803d'};">${fin.vacantRooms} Units (${Math.round(fin.vacancyRate)}%)</strong></td>
+          <th>Active Tenants Residing</th>
+          <td><strong>${fin.totalTenantsCount} Tenants</strong></td>
+        </tr>
+        <tr>
+          <th>New Move-Ins in Period</th>
+          <td><strong style="color:#15803d;">+${fin.newTenantsCount} Tenants</strong></td>
+          <th>Vacated in Period</th>
+          <td><strong style="color:#b45309;">-${fin.vacatedTenantsCount} Tenants</strong></td>
+        </tr>
+      </table>
+
+      <div class="pdf-section-title">2. Financial Performance &amp; Collection Summary</div>
+      <table class="pdf-grid-table">
+        <tr>
+          <th>Total Expected Rent</th>
+          <td><strong style="color:#1e1b4b;">${fmt(fin.expectedRent)}</strong></td>
+          <th>Total Rent Collected</th>
+          <td><strong style="color:#15803d;">${fmt(fin.rentCollected)}</strong></td>
+        </tr>
+        <tr>
+          <th>Rent Outstanding</th>
+          <td><strong style="color:${fin.rentOutstanding > 0 ? '#b91c1c' : '#15803d'};">${fmt(fin.rentOutstanding)}</strong></td>
+          <th>Total Collections (All Items)</th>
+          <td><strong style="color:#15803d;font-size:9.5px;">${fmt(fin.totalCollected)}</strong></td>
+        </tr>
+        <tr>
+          <th>Total Amount Billed</th>
+          <td><strong>${fmt(fin.totalBilled)}</strong></td>
+          <th>Total Outstanding Dues</th>
+          <td><strong style="color:${fin.totalOutstanding > 0 ? '#b91c1c' : '#15803d'};font-size:9.5px;">${fmt(fin.totalOutstanding)}</strong></td>
+        </tr>
+        <tr>
+          <th>Previous Dues Brought Forward</th>
+          <td><strong>${fmt(fin.previousDueTotal)}</strong></td>
+          <th>Bill Clearance Health</th>
+          <td><strong>${fin.paidBillsCount} Paid &bull; ${fin.partialBillsCount} Partial &bull; ${fin.unpaidBillsCount} Unpaid</strong></td>
+        </tr>
+      </table>
+
+      <div class="pdf-section-title">3. Collections by Revenue Component</div>
+      <table class="pdf-table">
+        <colgroup>
+          <col style="width:35%;">
+          <col style="width:35%;">
+          <col style="width:30%;">
+        </colgroup>
+        <thead><tr><th>Category</th><th>Amount Collected</th><th>Share of Total</th></tr></thead>
+        <tbody>
+          <tr><td>Rent Collections</td><td style="font-weight:700;color:#15803d;">${fmt(fin.collRent)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collRent / fin.collTotal) * 100) : 0}%</td></tr>
+          <tr><td>Electricity Collections</td><td style="font-weight:600;">${fmt(fin.collElec)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collElec / fin.collTotal) * 100) : 0}%</td></tr>
+          <tr><td>Water Collections</td><td style="font-weight:600;">${fmt(fin.collWater)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collWater / fin.collTotal) * 100) : 0}%</td></tr>
+          <tr><td>Parking Charges</td><td style="font-weight:600;">${fmt(fin.collParking)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collParking / fin.collTotal) * 100) : 0}%</td></tr>
+          <tr><td>Maintenance Collections</td><td style="font-weight:600;">${fmt(fin.collMaint)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collMaint / fin.collTotal) * 100) : 0}%</td></tr>
+          <tr><td>Other Charges</td><td style="font-weight:600;">${fmt(fin.collOther)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collOther / fin.collTotal) * 100) : 0}%</td></tr>
+          <tr><td>Previous Dues Cleared</td><td style="font-weight:600;">${fmt(fin.collPrevDue)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collPrevDue / fin.collTotal) * 100) : 0}%</td></tr>
+          <tr style="font-weight:800;background:#f3f4f6;"><td>Total Received Ledger</td><td style="color:#15803d;font-size:9.5px;">${fmt(fin.collTotal)}</td><td>100%</td></tr>
+        </tbody>
+      </table>
+    `;
+
+    // ── PAGE 2: Unit & Tenant Roster ──
+    let page2Html = `
+      <div class="html2pdf__page-break pdf-page-break"></div>
+      <div class="pdf-mini-header">
+        <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Unit &amp; Tenant Roster</span>
+        <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
+      </div>
+      <div class="pdf-section-title">4. Property Units &amp; Occupancy Roster</div>
+    `;
+
+    if (units.length === 0) {
+      page2Html += `<p style="font-size:8.5px;color:#6b7280;padding:12px 0;">No units configured for this property.</p>`;
+    } else {
+      let unitRows = '';
+      units.forEach((u, i) => {
+        const tenant = tenants.find(t => t.unitId === u.id || t.unitNumber === u.unitNumber);
+        const isOccupied = u.status === 'occupied' || Boolean(tenant);
+        unitRows += `<tr>
+          <td>${i + 1}</td>
+          <td><strong>${u.unitNumber || 'Unit'}</strong></td>
+          <td>${u.floor || '—'} / ${u.type || 'Standard'}</td>
+          <td><span class="${isOccupied ? 'badge-paid' : 'badge-unpaid'}">${isOccupied ? 'OCCUPIED' : 'VACANT'}</span></td>
+          <td><strong>${tenant ? tenant.name : '—'}</strong></td>
+          <td>${tenant ? (tenant.mobile || tenant.mobileNumber || '—') : '—'}</td>
+          <td>${tenant ? fmt(tenant.rent || tenant.monthlyRent) : fmt(u.rent || u.monthlyRent)}</td>
+          <td>${tenant ? fmtDate(tenant.moveIn || tenant.moveInDate) : '—'}</td>
+        </tr>`;
+      });
+      page2Html += `
+        <table class="pdf-table">
+          <colgroup>
+            <col style="width:4%;">
+            <col style="width:12%;">
+            <col style="width:14%;">
+            <col style="width:12%;">
+            <col style="width:20%;">
+            <col style="width:14%;">
+            <col style="width:12%;">
+            <col style="width:12%;">
+          </colgroup>
+          <thead><tr><th>#</th><th>Unit No</th><th>Floor / Type</th><th>Status</th><th>Current Tenant</th><th>Mobile</th><th>Monthly Rent</th><th>Move-in</th></tr></thead>
+          <tbody>${unitRows}</tbody>
+        </table>
+      `;
+    }
+
+    // ── PAGE 3+: Bills History (Chunked) ──
+    let page3Html = '';
+    if (bills.length === 0) {
+      page3Html = `
+        <div class="html2pdf__page-break pdf-page-break"></div>
+        <div class="pdf-mini-header">
+          <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Billing History</span>
+          <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
+        </div>
+        <div class="pdf-section-title">5. Billing History in Period</div>
+        <p style="font-size:8.5px;color:#6b7280;padding:12px 0;">No bills generated for the selected property in this period.</p>
+      `;
+    } else {
+      const billChunks = chunkRows(bills, 14);
+      billChunks.forEach((chunk, chunkIdx) => {
+        let rows = '';
+        chunk.forEach((b, i) => {
+          const tenant = tenants.find(t => t.id === b.tenantId);
+          const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+          const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+          const stLabel = paymentStatusLabel(b);
+          const badgeClass = stLabel === 'PAID' ? 'badge-paid' : stLabel === 'PARTIALLY PAID' ? 'badge-partial' : 'badge-unpaid';
+          rows += `<tr>
+            <td>${chunkIdx * 14 + i + 1}</td>
+            <td><strong>${b.billNumber || '—'}</strong></td>
+            <td>${tenantName}</td>
+            <td>${unitNo}</td>
+            <td>${formatMonthReadable(b.billingMonth)}</td>
+            <td>${fmtDate(b.dueDate || getBillDate(b))}</td>
+            <td>${fmt(b.rent)}</td>
+            <td>${fmt(b.electricityCharge)}</td>
+            <td>${fmt(b.waterCharge)}</td>
+            <td style="font-weight:700;">${fmt(b.totalAmount)}</td>
+            <td style="color:#15803d;font-weight:700;">${fmt(b.paidAmount)}</td>
+            <td style="color:${Number(b.remainingAmount) > 0 ? '#b91c1c' : '#15803d'};font-weight:700;">${fmt(b.remainingAmount)}</td>
+            <td><span class="${badgeClass}">${stLabel}</span></td>
+          </tr>`;
+        });
+
+        const continuationLabel = chunkIdx > 0 ? ` &mdash; Continued (Page ${chunkIdx + 1})` : '';
+        page3Html += `
+          <div class="html2pdf__page-break pdf-page-break"></div>
+          <div class="pdf-mini-header">
+            <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Billing History${continuationLabel}</span>
+            <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
+          </div>
+          <div class="pdf-section-title">5. Billing History in Period${continuationLabel}</div>
+          <table class="pdf-table">
+            <colgroup>
+              <col style="width:3%;">
+              <col style="width:11%;">
+              <col style="width:13%;">
+              <col style="width:7%;">
+              <col style="width:8%;">
+              <col style="width:8%;">
+              <col style="width:9%;">
+              <col style="width:8%;">
+              <col style="width:7%;">
+              <col style="width:9%;">
+              <col style="width:8%;">
+              <col style="width:9%;">
+            </colgroup>
+            <thead><tr><th>#</th><th>Bill No.</th><th>Tenant</th><th>Unit</th><th>Month</th><th>Due Date</th><th>Rent</th><th>Electricity</th><th>Water</th><th>Total</th><th>Paid</th><th>Due</th><th>Status</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+      });
+    }
+
+    // ── PAGE 4+: Daily Collections / Payments Received (Chunked) ──
+    let page4Html = '';
+    if (payments.length === 0) {
+      page4Html = `
+        <div class="html2pdf__page-break pdf-page-break"></div>
+        <div class="pdf-mini-header">
+          <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Collections &amp; Payments</span>
+          <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
+        </div>
+        <div class="pdf-section-title">6. Actual Money Collections in Period</div>
+        <p style="font-size:8.5px;color:#6b7280;padding:12px 0;">No payments recorded in this period.</p>
+      `;
+    } else {
+      const paymentChunks = chunkRows(payments, 14);
+      paymentChunks.forEach((chunk, chunkIdx) => {
+        let rows = '';
+        chunk.forEach((p, i) => {
+          const tenant = tenants.find(t => t.id === p.tenantId);
+          const tenantName = tenant ? tenant.name : (p.tenantName || 'Tenant');
+          let billInfo = '—';
+          if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+            billInfo = p.allocations.map(a => `${a.type === 'advance' ? 'Advance' : 'Bill'} (₹${a.amount})`).join(', ');
+          } else if (p.billId) {
+            billInfo = p.billId === 'advance' ? 'Advance Payment' : 'Direct Bill Payment';
+          }
+          rows += `<tr>
+            <td>${chunkIdx * 14 + i + 1}</td>
+            <td>${fmtDate(getPaymentDate(p))}</td>
+            <td><strong>${tenantName}</strong></td>
+            <td>${billInfo}</td>
+            <td style="font-weight:700;color:#15803d;">${fmt(p.amount || p.amountPaid)}</td>
+            <td>${paymentMethodLabel(p.paymentMethod || p.mode)}</td>
+            <td style="font-family:monospace;font-size:7px;">${p.transactionId || p.referenceId || '—'}</td>
+            <td><span class="badge-paid">${(p.status || 'approved').toUpperCase()}</span></td>
+          </tr>`;
+        });
+
+        const continuationLabel = chunkIdx > 0 ? ` &mdash; Continued (Page ${chunkIdx + 1})` : '';
+        page4Html += `
+          <div class="html2pdf__page-break pdf-page-break"></div>
+          <div class="pdf-mini-header">
+            <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Collections Ledger${continuationLabel}</span>
+            <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
+          </div>
+          <div class="pdf-section-title">6. Actual Money Collections in Period${continuationLabel}</div>
+          <table class="pdf-table">
+            <colgroup>
+              <col style="width:4%;">
+              <col style="width:11%;">
+              <col style="width:16%;">
+              <col style="width:23%;">
+              <col style="width:12%;">
+              <col style="width:11%;">
+              <col style="width:13%;">
+              <col style="width:10%;">
+            </colgroup>
+            <thead><tr><th>#</th><th>Payment Date</th><th>Tenant</th><th>Payment Received Against</th><th>Amount</th><th>Method</th><th>Txn / Ref ID</th><th>Status</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+      });
+    }
+
+    // ── PAGE 5: Utilities & Outstanding Dues ──
+    let utilityRows = '';
+    bills.forEach((b, i) => {
+      const tenant = tenants.find(t => t.id === b.tenantId);
+      const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+      const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+      const eDates = getMeterReadingDates(b, bills, tenant);
+      utilityRows += `<tr>
+        <td>${i + 1}</td>
+        <td><strong>${tenantName}</strong> (Unit ${unitNo})</td>
+        <td>Electricity</td>
+        <td>${b.previousMeterReading != null ? b.previousMeterReading : '—'}</td>
+        <td>${formatDDMMYYYY(eDates.prevDate) || '—'}</td>
+        <td>${b.currentMeterReading != null ? b.currentMeterReading : '—'}</td>
+        <td>${formatDDMMYYYY(eDates.currDate) || '—'}</td>
+        <td style="font-weight:600;">${b.electricityUnits || 0} u</td>
+        <td>${b.electricityRate ? `₹${b.electricityRate}/u` : (b.electricityFixedAmount ? `Fixed ₹${b.electricityFixedAmount}` : '—')}</td>
+        <td style="font-weight:700;color:#1e1b4b;">${fmt(b.electricityCharge)}</td>
+      </tr>`;
+    });
+
+    let duesRows = '';
+    outstandingBills.forEach((b, i) => {
+      const tenant = tenants.find(t => t.id === b.tenantId);
+      const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+      const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+      const overdue = getDaysOverdue(b.dueDate);
+      duesRows += `<tr>
+        <td>${i + 1}</td>
+        <td><strong>${tenantName}</strong></td>
+        <td>Unit ${unitNo}</td>
+        <td>${b.billNumber || '—'}</td>
+        <td>${formatMonthReadable(b.billingMonth)}</td>
+        <td>${fmtDate(b.dueDate)}</td>
+        <td style="color:${overdue > 0 ? '#b91c1c' : '#4b5563'};font-weight:600;">${overdue > 0 ? `${overdue} days` : 'Current'}</td>
+        <td>${fmt(b.totalAmount)}</td>
+        <td style="color:#15803d;">${fmt(b.paidAmount)}</td>
+        <td style="color:#b91c1c;font-weight:700;">${fmt(b.remainingAmount)}</td>
+      </tr>`;
+    });
+
+    const page5Html = `
+      <div class="html2pdf__page-break pdf-page-break"></div>
+      <div class="pdf-mini-header">
+        <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Utilities &amp; Outstanding Dues</span>
+        <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
+      </div>
+
+      <div class="pdf-section-title">7. Electricity &amp; Utility Consumption Breakdown</div>
+      <table class="pdf-table">
+        <colgroup>
+          <col style="width:3%;">
+          <col style="width:18%;">
+          <col style="width:9%;">
+          <col style="width:10%;">
+          <col style="width:10%;">
+          <col style="width:10%;">
+          <col style="width:10%;">
+          <col style="width:9%;">
+          <col style="width:10%;">
+          <col style="width:11%;">
+        </colgroup>
+        <thead><tr><th>#</th><th>Tenant &amp; Unit</th><th>Utility</th><th>Prev Reading</th><th>Prev Date</th><th>Curr Reading</th><th>Curr Date</th><th>Units</th><th>Rate / Plan</th><th>Total Charge</th></tr></thead>
+        <tbody>${utilityRows || '<tr><td colspan="10" style="text-align:center;color:#6b7280;">No utility charges recorded in this period.</td></tr>'}</tbody>
+      </table>
+
+      <div class="pdf-section-title" style="margin-top:12px;">8. Outstanding Dues &amp; Overdue Invoices</div>
+      <table class="pdf-table">
+        <colgroup>
+          <col style="width:4%;">
+          <col style="width:18%;">
+          <col style="width:8%;">
+          <col style="width:13%;">
+          <col style="width:11%;">
+          <col style="width:11%;">
+          <col style="width:10%;">
+          <col style="width:9%;">
+          <col style="width:8%;">
+          <col style="width:8%;">
+        </colgroup>
+        <thead><tr><th>#</th><th>Tenant</th><th>Unit</th><th>Bill No.</th><th>Month</th><th>Due Date</th><th>Overdue</th><th>Total Bill</th><th>Paid</th><th>Remaining</th></tr></thead>
+        <tbody>${duesRows || '<tr><td colspan="10" style="text-align:center;color:#15803d;font-weight:700;">✓ Outstanding balance zero! All bills are fully paid in this period.</td></tr>'}</tbody>
+      </table>
+
+      <!-- Footer -->
+      <div style="margin-top:16px;border-top:1px solid #e5e7eb;padding-top:8px;font-size:8px;color:#9ca3af;text-align:center;">
+        Generated automatically by Rentora Cloud Platform &bull; Landlord: ${ownerName} &bull; ${fmtDateTime(new Date().toISOString())}
+        <br>This business report contains consolidated property operational and financial data. Preserved securely for tax and landlord accounting.
+      </div>
+    `;
+
+    const fullPdfHtml = `
+      ${page1Html}
+      ${page2Html}
+      ${page3Html}
+      ${page4Html}
+      ${page5Html}
+    `;
+
+    // Create temporary offscreen container for html2pdf
+    const container = document.createElement('div');
+    container.id = 'rentora-pdf-temp-container';
+    container.style.position = 'fixed';
+    container.style.top = '0';
+    container.style.left = '0';
+    container.style.width = '1060px';
+    container.style.minHeight = '750px';
+    container.style.zIndex = '-99999';
+    container.style.backgroundColor = '#ffffff';
+    container.style.opacity = '1';
+    container.style.visibility = 'visible';
+    container.style.pointerEvents = 'none';
+    container.style.overflow = 'hidden';
+    container.style.boxSizing = 'border-box';
+    container.style.margin = '0';
+    container.style.padding = '0';
+
+    container.innerHTML = `
+      <div class="pdf-content-wrapper">
+        <style>${commonCss}</style>
+        ${fullPdfHtml}
+      </div>
+    `;
+
+    document.body.appendChild(container);
+
+    try {
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch (_) {}
+      }
+      await new Promise(r => setTimeout(r, 250));
+
+      const targetEl = container.querySelector('.pdf-content-wrapper') || container;
+      const opt = {
+        margin: [8, 8, 8, 8],
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          scrollX: 0,
+          scrollY: 0
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+        pagebreak: {
+          mode: ['css', 'legacy'],
+          before: '.pdf-page-break',
+          avoid: ['tr', '.pdf-grid-table', '.pdf-header', '.pdf-mini-header', '.pdf-section-title']
+        }
+      };
+
+      await html2pdf().set(opt).from(targetEl).save();
+    } catch (err) {
+      console.error('Property PDF generation error:', err);
+      alert('PDF generation failed: ' + (err.message || 'Please try again.'));
+    } finally {
+      if (container.parentNode) {
+        container.parentNode.removeChild(container);
+      }
+      if (exportBtn) {
+        exportBtn.disabled = false;
+        exportBtn.innerHTML = origBtnHtml;
+      }
+    }
+  };
+
+  // ── Unified Export Dispatchers ──────────────────────────────────────────────
+  window.downloadSelectedExcel = function () {
+    if (_currentReportType === 'property') {
+      return window.downloadPropertyExcel();
+    }
+    return window.downloadTenantExcel();
+  };
+
+  window.downloadSelectedPDF = function () {
+    if (_currentReportType === 'property') {
+      return window.downloadPropertyPDF();
+    }
+    return window.downloadTenantPDF();
+  };
+
+  // ── Excel Generation (Tenant Historical) ────────────────────────────────────
   window.downloadTenantExcel = function () {
     if (!_currentReportTenantId) { alert('Please select a tenant first.'); return; }
 
@@ -2858,6 +4737,7 @@
 
   // ── Testing / API Hook ─────────────────────────────────────────────────────
   window._testAssemble = assembleReportData;
+  window._testAssembleProperty = assemblePropertyReportData;
 
   // ── State bridge & Auto-Initializer ────────────────────────────────────────
   function installStateBridge() {
