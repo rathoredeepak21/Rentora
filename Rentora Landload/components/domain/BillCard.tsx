@@ -106,7 +106,7 @@ export const BillCard = memo<BillCardProps>(({
           </Text>
           {totalPaymentAllocated > 0 && (
             <Text style={[styles.prevDueHint, { color: colors.secondary, fontWeight: typography.weights.semibold }]} numberOfLines={1}>
-              Total payment allocated: ₹{totalPaymentAllocated.toLocaleString('en-IN')}
+              Total payment received: ₹{totalPaymentAllocated.toLocaleString('en-IN')}
             </Text>
           )}
           {totalPaymentAllocated === 0 && bill.previousDue > 0 && (
@@ -120,7 +120,7 @@ export const BillCard = memo<BillCardProps>(({
       {isPartial && (
         <View style={styles.partialFooter}>
           <Text style={styles.partialText}>
-            Total payment allocated: <Text style={{ color: colors.secondary, fontWeight: typography.weights.bold }}>₹{totalPaymentAllocated.toLocaleString('en-IN')}</Text>
+            Total payment received: <Text style={{ color: colors.secondary, fontWeight: typography.weights.bold }}>₹{totalPaymentAllocated.toLocaleString('en-IN')}</Text>
             {'  •  '}
             Original Total Payable: <Text style={styles.boldText}>₹{totalPayable.toLocaleString('en-IN')}</Text>
           </Text>

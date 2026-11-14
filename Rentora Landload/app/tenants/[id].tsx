@@ -717,12 +717,12 @@ export default function TenantDetailsScreen() {
                         {/* Breakdown of how this single transaction was adjusted */}
                         {Array.isArray(payment.allocations) && payment.allocations.length > 0 && (
                           <View style={styles.allocationBox}>
-                            <Text style={styles.allocationBoxTitle}>Bill Allocation Breakdown</Text>
+                            <Text style={styles.allocationBoxTitle}>Payment Received Breakdown</Text>
                             {payment.allocations.map((alloc, aIdx) => {
                               const b = bills.find((tb) => tb.id === alloc.billId);
                               const billRef = alloc.type === 'advance'
-                                ? 'Adjusted to Advance Rent'
-                                : `Adjusted against ${b?.billingMonth ? b.billingMonth + ' ' : ''}(${b?.billNumber || alloc.billNumber || 'Bill'})`;
+                                ? 'Received for Advance Rent'
+                                : `Received for ${b?.billingMonth ? b.billingMonth + ' ' : ''}(${b?.billNumber || alloc.billNumber || 'Bill'})`;
                               return (
                                 <View key={aIdx} style={styles.allocationRow}>
                                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 }}>

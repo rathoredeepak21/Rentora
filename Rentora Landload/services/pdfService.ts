@@ -917,7 +917,7 @@ export const pdfService = {
             return `
               <div class="payment-allocation-box" style="margin-top: 8px; margin-bottom: 10px; border: 1px solid #111827; background-color: #ffffff; page-break-inside: avoid;">
                 <div style="background-color: #3b49df; color: #ffffff; padding: 5px 8px; font-weight: 800; font-size: 10.5px; display: flex; justify-content: space-between; align-items: center;">
-                  <span>PAYMENT & ALLOCATION DETAILS</span>
+                  <span>PAYMENT RECEIVED DETAILS</span>
                   <span style="font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase;">STATUS: ${statusLabel}</span>
                 </div>
                 
@@ -1953,7 +1953,7 @@ export const pdfService = {
               <th class="text-right">Amount (₹)</th>
               <th>Payment Mode</th>
               <th>Transaction / Reference ID</th>
-              <th>Bill Allocation Breakdown</th>
+              <th>Payment Received Breakdown</th>
             </tr>
           </thead>
           <tbody>

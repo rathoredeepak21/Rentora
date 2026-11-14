@@ -208,7 +208,7 @@ Bill Number: ${bill.billNumber}
 - Previous Dues: ₹${bill.previousDue}
 
 Original Total Payable: ₹${totalPayable}
-${totalPaymentAllocated > 0 ? `Total payment allocated: ₹${totalPaymentAllocated}\n` : ''}*REMAINING AMOUNT DUE: ₹${remainingAmountDue}*
+${totalPaymentAllocated > 0 ? `Total payment received: ₹${totalPaymentAllocated}\n` : ''}*REMAINING AMOUNT DUE: ₹${remainingAmountDue}*
 
 Payment Status: *${status.toUpperCase()}*
 Due Date: *${formatBillDate(bill.dueDate)}*
@@ -300,18 +300,18 @@ _Generated via Rentora App._`;
           {totalPaymentAllocated > 0 && (
             <View style={styles.balanceSummary}>
               <View style={styles.balRow}>
-                <Text style={styles.balLabel}>Total payment allocated:</Text>
+                <Text style={styles.balLabel}>Total Payment Received:</Text>
                 <MoneyText amount={totalPaymentAllocated} variant="success" style={styles.balValue} />
               </View>
               {bill.previousDue > 0 && (Number(bill.previousDuePaid) || 0) > 0 && (
                 <View style={[styles.balRow, { paddingLeft: spacing.sm }]}>
-                  <Text style={[styles.balLabel, { fontSize: typography.sizes.xs }]}>• Allocated to Previous Dues:</Text>
+                  <Text style={[styles.balLabel, { fontSize: typography.sizes.xs }]}>• Received for Previous Dues:</Text>
                   <MoneyText amount={bill.previousDuePaid || 0} variant="success" style={{ fontSize: typography.sizes.xs + 1 }} />
                 </View>
               )}
               {bill.previousDue > 0 && (Number(bill.currentBillPaid) || 0) > 0 && (
                 <View style={[styles.balRow, { paddingLeft: spacing.sm }]}>
-                  <Text style={[styles.balLabel, { fontSize: typography.sizes.xs }]}>• Allocated to Current Month:</Text>
+                  <Text style={[styles.balLabel, { fontSize: typography.sizes.xs }]}>• Received for Current Month:</Text>
                   <MoneyText amount={bill.currentBillPaid || 0} variant="success" style={{ fontSize: typography.sizes.xs + 1 }} />
                 </View>
               )}
@@ -601,7 +601,7 @@ _Generated via Rentora App._`;
 
           {totalPaymentAllocated > 0 && (
             <View style={styles.totalRow}>
-              <Text style={[styles.totalBreakdownLabel, { color: colors.secondary }]}>Total Payment Allocated</Text>
+              <Text style={[styles.totalBreakdownLabel, { color: colors.secondary }]}>Total Payment Received</Text>
               <MoneyText amount={totalPaymentAllocated} variant="success" style={styles.totalBreakdownValue} />
             </View>
           )}
@@ -625,7 +625,7 @@ _Generated via Rentora App._`;
         {/* Payments list card */}
         {payments.length > 0 && (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Transaction Payments History</Text>
+            <Text style={styles.sectionTitle}>Payment Received History</Text>
             {payments.map((payment) => {
               const status = payment.status || 'approved';
               const billAllocatedAmount = paymentService.getPaymentAmountForBill(payment, id!) || Number(payment.amount) || 0;
@@ -641,7 +641,7 @@ _Generated via Rentora App._`;
                       {isDifferentMonth && (
                         <View style={{ backgroundColor: colors.primary + '18', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3 }}>
                           <Text style={{ fontSize: 9.5, fontWeight: '700', color: colors.primary }}>
-                            Adjusted from {pMonth} payment
+                            Received in {pMonth} payment
                           </Text>
                         </View>
                       )}
@@ -671,7 +671,7 @@ _Generated via Rentora App._`;
                       />
                       {isPartialAllocation && (
                         <Text style={{ fontSize: 10, color: colors.textSecondary }}>
-                          adjusted from ₹{Number(payment.amount).toLocaleString('en-IN')} total payment
+                          part of ₹{Number(payment.amount).toLocaleString('en-IN')} total received
                         </Text>
                       )}
                     </View>

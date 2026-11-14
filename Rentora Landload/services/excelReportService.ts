@@ -969,9 +969,9 @@ export const excelReportService = {
       'Payment Amount (₹)',
       'Payment Mode',
       'Transaction / Ref ID',
-      'Bill Allocation / Details',
+      'Payment Received Details',
       'Verification Status',
-      'Allocated Bill(s) & Month(s)',
+      'Received For Bill(s) & Month(s)',
     ];
 
     const s3Rows: any[][] = [s3Headers];
