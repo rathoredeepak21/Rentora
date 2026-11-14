@@ -2204,15 +2204,17 @@
         </div>
       `;
 
-      // Page 2+: Generated Bills & Dues History with Table Header Repeating
-      let page2Html = '';
+      // Bills Section: If <= 4 bills, fits on Page 1; if > 4 bills, starts on Page 2
+      const breakBeforeBills = bills.length > 4;
       const billChunks = chunkArray(bills, 13);
+      let page2Html = '';
+
       if (billChunks.length === 0) {
         page2Html = `
-          <div class="html2pdf__page-break pdf-page-break"></div>
-          ${miniHeader('Bills History')}
-          <div class="pdf-section-title">4. Generated Bills &amp; Dues History (0 bills)</div>
-          <p style="color:#6b7280;padding:8px 0;font-size:8.5px;">No bills generated in this date range.</p>
+          <div style="margin-top:10px;">
+            <div class="pdf-section-title">4. Generated Bills &amp; Dues History (0 bills)</div>
+            <p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No bills generated in this date range.</p>
+          </div>
         `;
       } else {
         billChunks.forEach((chunk, chunkIdx) => {
@@ -2254,35 +2256,39 @@
               </tr>
             </tfoot>` : '';
 
+          const isFirstPageOfBills = chunkIdx === 0;
+          const needsBreak = (isFirstPageOfBills && breakBeforeBills) || (!isFirstPageOfBills);
+
           page2Html += `
-            <div class="html2pdf__page-break pdf-page-break"></div>
-            ${miniHeader(chunkIdx === 0 ? 'Bills History' : `Bills History (Page ${chunkIdx + 1})`)}
-            <div class="pdf-section-title">4. Generated Bills &amp; Dues History (${bills.length} bills)${chunkIdx > 0 ? ` &nbsp;—&nbsp; Continued (Page ${chunkIdx + 1})` : ''}</div>
-            <table class="pdf-table">
-              <colgroup>
-                <col style="width:3%;">
-                <col style="width:10%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-                <col style="width:9%;">
-                <col style="width:6%;">
-                <col style="width:7%;">
-                <col style="width:9%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th>
-                  <th>Rent</th><th>Electricity</th><th>Water</th><th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody>${rowsHtml}</tbody>
-              ${footerHtml}
-            </table>
+            ${needsBreak ? `<div class="html2pdf__page-break pdf-page-break"></div>${miniHeader(isFirstPageOfBills ? 'Bills History' : `Bills History (Page ${chunkIdx + 1})`)}` : ''}
+            <div>
+              <div class="pdf-section-title">4. Generated Bills &amp; Dues History (${bills.length} bills)${chunkIdx > 0 ? ` &nbsp;—&nbsp; Continued (Page ${chunkIdx + 1})` : ''}</div>
+              <table class="pdf-table">
+                <colgroup>
+                  <col style="width:3%;">
+                  <col style="width:10%;">
+                  <col style="width:8%;">
+                  <col style="width:8%;">
+                  <col style="width:8%;">
+                  <col style="width:8%;">
+                  <col style="width:9%;">
+                  <col style="width:6%;">
+                  <col style="width:7%;">
+                  <col style="width:9%;">
+                  <col style="width:8%;">
+                  <col style="width:8%;">
+                  <col style="width:8%;">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th>
+                    <th>Rent</th><th>Electricity</th><th>Water</th><th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+                ${footerHtml}
+              </table>
+            </div>
           `;
         });
       }
@@ -2578,13 +2584,14 @@
 
       // Page 2+: Bills History with Repeating Table Header
       let page2Html = '';
+      const breakBeforeVacBills = bills.length > 4;
       const billChunks = chunkArray(bills, 13);
       if (billChunks.length === 0) {
         page2Html = `
-          <div class="html2pdf__page-break pdf-page-break"></div>
-          ${miniHeader('Bills History')}
-          <div class="pdf-section-title">4. Complete Bills History (0 bills)</div>
-          <p style="color:#6b7280;padding:8px 0;font-size:8.5px;">No bills on record for this tenancy.</p>
+          <div style="margin-top:10px;">
+            <div class="pdf-section-title">4. Complete Bills History (0 bills)</div>
+            <p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No bills on record for this tenancy.</p>
+          </div>
         `;
       } else {
         billChunks.forEach((chunk, chunkIdx) => {
@@ -2622,38 +2629,42 @@
               </tr>
             </tfoot>` : '';
 
+          const isFirstPageOfBills = chunkIdx === 0;
+          const needsBreak = (isFirstPageOfBills && breakBeforeVacBills) || (!isFirstPageOfBills);
+
           page2Html += `
-            <div class="html2pdf__page-break pdf-page-break"></div>
-            ${miniHeader(chunkIdx === 0 ? 'Bills History' : `Bills History (Page ${chunkIdx + 1})`)}
-            <div class="pdf-section-title">4. Complete Bills History (${bills.length} bills)${chunkIdx > 0 ? ` &nbsp;—&nbsp; Continued (Page ${chunkIdx + 1})` : ''}</div>
-            <table class="pdf-table">
-              <colgroup>
-                <col style="width:3%;">
-                <col style="width:9%;">
-                <col style="width:7%;">
-                <col style="width:7%;">
-                <col style="width:7%;">
-                <col style="width:7%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-                <col style="width:6%;">
-                <col style="width:6%;">
-                <col style="width:7%;">
-                <col style="width:7%;">
-                <col style="width:7%;">
-                <col style="width:7%;">
-                <col style="width:6%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th>
-                  <th>Rent</th><th>Electricity</th><th>Elec Charge</th><th>Water</th><th>Parking</th>
-                  <th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody>${rowsHtml}</tbody>
-              ${footerHtml}
-            </table>
+            ${needsBreak ? `<div class="html2pdf__page-break pdf-page-break"></div>${miniHeader(isFirstPageOfBills ? 'Bills History' : `Bills History (Page ${chunkIdx + 1})`)}` : ''}
+            <div>
+              <div class="pdf-section-title">4. Complete Bills History (${bills.length} bills)${chunkIdx > 0 ? ` &nbsp;—&nbsp; Continued (Page ${chunkIdx + 1})` : ''}</div>
+              <table class="pdf-table">
+                <colgroup>
+                  <col style="width:3%;">
+                  <col style="width:9%;">
+                  <col style="width:7%;">
+                  <col style="width:7%;">
+                  <col style="width:7%;">
+                  <col style="width:7%;">
+                  <col style="width:8%;">
+                  <col style="width:8%;">
+                  <col style="width:6%;">
+                  <col style="width:6%;">
+                  <col style="width:7%;">
+                  <col style="width:7%;">
+                  <col style="width:7%;">
+                  <col style="width:7%;">
+                  <col style="width:6%;">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th>
+                    <th>Rent</th><th>Electricity</th><th>Elec Charge</th><th>Water</th><th>Parking</th>
+                    <th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+                ${footerHtml}
+              </table>
+            </div>
           `;
         });
       }
@@ -2777,10 +2788,9 @@
     container.style.position = 'fixed';
     container.style.top = '0';
     container.style.left = '0';
-    container.style.width = '1060px';
-    container.style.backgroundColor = '#ffffff';
-    container.style.color = '#111827';
+    container.style.width = '100%';
     container.style.zIndex = '-99999';
+    container.style.backgroundColor = '#ffffff';
     container.style.visibility = 'visible';
     container.style.pointerEvents = 'none';
     container.style.boxSizing = 'border-box';
@@ -2788,19 +2798,10 @@
     container.style.padding = '0';
 
     container.innerHTML = `
-      <style>
-        #rentora-pdf-temp-container {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
-          background-color: #ffffff !important;
-          color: #111827 !important;
-          line-height: 1.38 !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          box-sizing: border-box !important;
-        }
-        ${commonCss}
-      </style>
       <div class="pdf-content-wrapper">
+        <style>
+          ${commonCss}
+        </style>
         ${contentHtml}
       </div>
     `;
@@ -2813,17 +2814,14 @@
 
       const targetEl = container.querySelector('.pdf-content-wrapper') || container;
       const opt = {
-        margin: [10, 10, 10, 10], // 10mm margins on all sides: Top, Right, Bottom, Left
+        margin: [8, 8, 8, 8],
         filename: filename,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: {
           scale: 2,
           useCORS: true,
           logging: false,
-          backgroundColor: '#ffffff',
-          windowWidth: 1060,
-          scrollX: 0,
-          scrollY: 0
+          backgroundColor: '#ffffff'
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
         pagebreak: {
