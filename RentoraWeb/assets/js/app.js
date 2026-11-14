@@ -249,6 +249,7 @@
       address: 'A-42, Malviya Nagar, Jaipur, Rajasthan 302017',
       upiId: 'rentora@upi',
       logoUrl: '',
+      signatureUrl: '',
       paymentInstructions: 'Please pay by the due date to avoid any late fees. Kindly send a payment screenshot for verification.'
     }
   };
@@ -1696,7 +1697,7 @@
                   <th style="padding: 8px 10px;">Bill #</th>
                   <th style="padding: 8px 10px;">Month</th>
                   <th style="padding: 8px 10px;">Total</th>
-                  <th style="padding: 8px 10px;">Paid</th>
+                  <th style="padding: 8px 10px;">Received</th>
                   <th style="padding: 8px 10px;">Due</th>
                   <th style="padding: 8px 10px;">Status</th>
                   <th style="padding: 8px 10px; text-align: right;">Action</th>
@@ -1708,7 +1709,7 @@
                     <td style="padding: 8px 10px; font-family: monospace; font-weight: 700; color: var(--primary);">${b.billNumber || 'INV'}</td>
                     <td style="padding: 8px 10px;">${formatMonthReadable(b.billingMonth)}</td>
                     <td style="padding: 8px 10px; font-weight: 600;">₹${Number(b.totalAmount || 0).toLocaleString('en-IN')}</td>
-                    <td style="padding: 8px 10px; color: #10B981;">₹${Number(b.paidAmount || 0).toLocaleString('en-IN')}</td>
+                    <td style="padding: 8px 10px; color: #10B981;">₹${Number(b.totalPaymentAllocated !== undefined ? b.totalPaymentAllocated : (b.paidAmount || 0)).toLocaleString('en-IN')}</td>
                     <td style="padding: 8px 10px; font-weight: 700; color: ${b.remainingAmount > 0 ? '#EF4444' : 'var(--text-muted)'};">₹${Number(b.remainingAmount || 0).toLocaleString('en-IN')}</td>
                     <td style="padding: 8px 10px;">
                       <span class="unit-badge badge-${b.paymentStatus || 'unpaid'}">${b.paymentStatus || 'unpaid'}</span>
@@ -1726,9 +1727,91 @@
         `}
       </div>
 
+      <!-- 6. Tenant Payment Received History (MOBILE APP 1:1) -->
+      <div class="detail-section-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <div class="detail-section-title" style="margin-bottom: 0; padding-bottom: 0; border: none;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+            Payment Received History (${(() => {
+              const tp = state.payments.filter(p => p.tenantId === tenant.id);
+              return tp.length;
+            })()})
+          </div>
+          ${tenant.status === 'active' ? `
+            <button class="btn btn-emerald btn-sm" onclick="closeModal('modalTenantDetails'); openRecordPaymentModal('tenant:${tenant.id}')">
+              + Record Payment
+            </button>
+          ` : ''}
+        </div>
+
+        ${(() => {
+          const tenantPayments = state.payments
+            .filter(p => p.tenantId === tenant.id)
+            .sort((a, b) => (b.paymentDate || b.createdAt || '').localeCompare(a.paymentDate || a.createdAt || ''));
+
+          if (tenantPayments.length === 0) {
+            return `
+              <div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.88rem;">
+                No payment transactions recorded for this tenant yet.
+              </div>
+            `;
+          }
+
+          return `
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              ${tenantPayments.map(p => {
+                const dateStr = p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : '—');
+                const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
+                const amt = Number(p.amount) || Number(p.amountPaid) || 0;
+                const hasAllocations = Array.isArray(p.allocations) && p.allocations.length > 0;
+
+                return `
+                  <div style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px 14px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 8px;">
+                      <div>
+                        <span style="font-weight: 700; color: #10B981; font-size: 1rem;">₹${amt.toLocaleString('en-IN')}</span>
+                        <span style="color: var(--text-muted); font-size: 0.8rem; margin-left: 8px;">via ${(p.paymentMethod || 'upi').toUpperCase()}</span>
+                      </div>
+                      <div style="font-size: 0.8rem; color: var(--text-secondary);">
+                        ${dateStr} ${timeStr !== '—' ? '• ' + timeStr : ''}
+                      </div>
+                    </div>
+
+                    <div style="font-size: 0.78rem; color: var(--text-muted); font-family: monospace; margin-bottom: 4px;">
+                      Txn: ${p.transactionId || 'N/A'}
+                    </div>
+
+                    ${hasAllocations ? `
+                      <div style="background: var(--bg-surface); padding: 8px 10px; border-radius: 4px; border: 1px dashed var(--border-subtle); margin-top: 6px;">
+                        <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--primary); margin-bottom: 4px;">Payment Received Breakdown</div>
+                        ${p.allocations.map(alloc => {
+                          const b = state.bills.find(tb => tb.id === alloc.billId);
+                          const label = alloc.type === 'advance'
+                            ? 'Received for Advance Rent'
+                            : `Received for ${b?.billingMonth ? formatMonthReadable(b.billingMonth) + ' ' : ''}(${b?.billNumber || alloc.billNumber || 'Bill'})`;
+                          return `
+                            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; padding: 2px 0;">
+                              <span style="color: var(--text-secondary);">↳ ${label}</span>
+                              <span style="font-weight: 700; color: var(--text-main);">₹${Number(alloc.amount).toLocaleString('en-IN')}</span>
+                            </div>
+                          `;
+                        }).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `;
+        })()}
+      </div>
+
       <!-- Action Buttons -->
       <div style="margin-top: 24px; display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
         ${tenant.status === 'active' ? `
+          <button class="btn btn-emerald btn-sm" onclick="closeModal('modalTenantDetails'); openRecordPaymentModal('tenant:${tenant.id}')">
+            Record Payment
+          </button>
           <button class="btn btn-primary btn-sm" onclick="closeModal('modalTenantDetails'); openCreateBillModal('${tenant.id}')">
             Create Bill
           </button>
@@ -1736,7 +1819,7 @@
             Move-Out Vacation & Settlement
           </button>
         ` : `
-          <button class="btn btn-emerald btn-sm" onclick="closeModal('modalTenantDetails'); viewSettlementInvoice('${tenant.settlementNum}')">
+          <button class="btn btn-emerald btn-sm" onclick="closeModal('modalTenantDetails'); viewSettlementInvoice('${tenant.settlementNum || tenant.settlementNumber}')">
             View Final Settlement
           </button>
         `}
@@ -2091,6 +2174,132 @@
   // ==========================================================================
   // 10. MOVE-OUT VACATION & SETTLEMENT FLOW (MOBILE APP 1:1)
   // ==========================================================================
+  window.computeSettlementStatus = function (settlement) {
+    if (!settlement) {
+      return {
+        targetTotal: 0,
+        amountSettled: 0,
+        amountPending: 0,
+        status: 'fully_settled',
+        direction: 'zero_balance',
+        partyMessage: 'No amount is payable by either party.',
+        directionTitle: 'FULLY SETTLED',
+        statusLabel: 'FULLY SETTLED',
+        badgeClass: 'badge-fully-settled'
+      };
+    }
+
+    const isZero = settlement.finalStatus === 'zero_balance' || 
+      (Math.abs(settlement.finalAmount || 0) === 0 && !settlement.totalRefundableAmount && !settlement.totalPayableAmount);
+
+    if (isZero) {
+      return {
+        targetTotal: 0,
+        amountSettled: 0,
+        amountPending: 0,
+        status: 'fully_settled',
+        direction: 'zero_balance',
+        partyMessage: 'No amount is payable by either party.',
+        directionTitle: 'FULLY SETTLED',
+        statusLabel: 'FULLY SETTLED',
+        badgeClass: 'badge-fully-settled'
+      };
+    }
+
+    const isRefundable = settlement.finalStatus === 'refundable' || 
+      (settlement.totalRefundableAmount !== undefined && Number(settlement.totalRefundableAmount) > 0) ||
+      settlement.settlementDirection === 'refund_to_tenant';
+
+    if (isRefundable) {
+      const targetTotal = Math.round(
+        (settlement.totalRefundableAmount !== undefined 
+          ? Number(settlement.totalRefundableAmount) 
+          : Math.abs(settlement.finalAmount || 0)) * 100
+      ) / 100;
+
+      const refundTxs = (settlement.transactions || []).filter(t => t.type === 'refund');
+      const amountSettled = Math.round(
+        refundTxs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0) * 100
+      ) / 100;
+
+      const amountPending = Math.max(0, Math.round((targetTotal - amountSettled) * 100) / 100);
+
+      let status = 'refund_pending';
+      let statusLabel = 'REFUND PENDING';
+      let badgeClass = 'badge-refund-pending';
+
+      if (amountSettled >= targetTotal && targetTotal > 0) {
+        status = 'fully_settled';
+        statusLabel = 'FULLY SETTLED';
+        badgeClass = 'badge-fully-settled';
+      } else if (amountSettled > 0) {
+        status = 'partially_refunded';
+        statusLabel = 'PARTIALLY REFUNDED';
+        badgeClass = 'badge-partially-refunded';
+      }
+
+      const partyMessage = status === 'fully_settled'
+        ? `The landlord has fully refunded ₹${targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })} to the tenant.`
+        : `The landlord must refund ₹${amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })} to the tenant.`;
+
+      return {
+        targetTotal,
+        amountSettled,
+        amountPending,
+        status,
+        direction: 'refund_to_tenant',
+        partyMessage,
+        directionTitle: 'REFUND PAYABLE TO TENANT',
+        statusLabel,
+        badgeClass
+      };
+    }
+
+    // Payment by tenant
+    const targetTotal = Math.round(
+      (settlement.totalPayableAmount !== undefined 
+        ? Number(settlement.totalPayableAmount) 
+        : Math.abs(settlement.finalAmount || 0)) * 100
+    ) / 100;
+
+    const paymentTxs = (settlement.transactions || []).filter(t => t.type === 'payment_received');
+    const amountSettled = Math.round(
+      paymentTxs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0) * 100
+    ) / 100;
+
+    const amountPending = Math.max(0, Math.round((targetTotal - amountSettled) * 100) / 100);
+
+    let status = 'payment_pending';
+    let statusLabel = 'PAYMENT PENDING';
+    let badgeClass = 'badge-payment-pending';
+
+    if (amountSettled >= targetTotal && targetTotal > 0) {
+      status = 'fully_settled';
+      statusLabel = 'FULLY SETTLED';
+      badgeClass = 'badge-fully-settled';
+    } else if (amountSettled > 0) {
+      status = 'partially_paid';
+      statusLabel = 'PARTIALLY PAID';
+      badgeClass = 'badge-partially-paid';
+    }
+
+    const partyMessage = status === 'fully_settled'
+      ? `The tenant has fully paid ₹${targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })} to the landlord.`
+      : `The tenant must pay ₹${amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })} to the landlord.`;
+
+    return {
+      targetTotal,
+      amountSettled,
+      amountPending,
+      status,
+      direction: 'payment_by_tenant',
+      partyMessage,
+      directionTitle: 'PAYMENT PAYABLE BY TENANT',
+      statusLabel,
+      badgeClass
+    };
+  };
+
   window.openVacateModal = function (tenantId) {
     const tenant = state.tenants.find(t => t.id === tenantId);
     if (!tenant) return;
@@ -2101,18 +2310,27 @@
     document.getElementById('vacateTenantId').value = tenant.id;
     document.getElementById('vacateUnitId').value = tenant.unitId;
     document.getElementById('vacateTenantName').textContent = tenant.name;
-    document.getElementById('vacateTenantUnitInfo').textContent = `Unit ${tenant.unitNumber} • Monthly Rent: ₹${Number(tenant.rent).toLocaleString('en-IN')}`;
+    document.getElementById('vacateTenantUnitInfo').textContent = `Unit ${tenant.unitNumber} • Monthly Rent: ₹${Number(tenant.rent || tenant.monthlyRent || 0).toLocaleString('en-IN')}`;
 
     const today = new Date();
     const fiveDaysAgo = new Date(Date.now() - 5 * 86400000);
     document.getElementById('vacatePeriodEnd').value = fiveDaysAgo.toISOString().split('T')[0];
     document.getElementById('vacateMoveOutDate').value = today.toISOString().split('T')[0];
 
-    document.getElementById('vacatePrevMeter').value = tenant.initialMeter || 450;
-    document.getElementById('vacateFinalMeter').value = (tenant.initialMeter || 450) + 26;
-    document.getElementById('vacateElecRate').value = 10;
-    document.getElementById('vacateAdvanceAdj').value = tenant.advance || 0;
-    document.getElementById('vacateDepositAdj').value = tenant.deposit || tenant.rent;
+    document.getElementById('vacatePrevMeter').value = tenant.initialMeter || tenant.initialMeterReading || 0;
+    document.getElementById('vacateFinalMeter').value = (tenant.initialMeter || tenant.initialMeterReading || 0) + 26;
+    document.getElementById('vacateElecRate').value = tenant.electricityRatePerUnit || 10;
+    
+    // Calculate canonical outstanding arrears across tenant's bills
+    const tenantBills = state.bills.filter(b => b.tenantId === tenant.id);
+    const outstandingArrears = calculateTenantOutstanding(tenantBills);
+    document.getElementById('vacateOutstandingBills').value = outstandingArrears;
+
+    document.getElementById('vacateOtherCharges').value = 0;
+    document.getElementById('vacateOtherChargesNotes').value = '';
+
+    document.getElementById('vacateDepositAdj').value = tenant.deposit || tenant.securityDeposit || tenant.rent || 0;
+    document.getElementById('vacateAdvanceAdj').value = tenant.advance || tenant.advanceAmount || 0;
 
     calculateModalSettlement();
     openModal('modalVacateTenant');
@@ -2122,15 +2340,18 @@
     if (!state.currentVacate) return;
     const { tenant } = state.currentVacate;
 
-    const rent = tenant.rent || 0;
+    const rent = Number(tenant.rent || tenant.monthlyRent) || 0;
     const endStr = document.getElementById('vacatePeriodEnd').value;
     const outStr = document.getElementById('vacateMoveOutDate').value;
     const policy = document.querySelector('input[name="modalPolicy"]:checked')?.value || 'fixed30';
     const prevMeter = Math.max(0, parseFloat(document.getElementById('vacatePrevMeter').value) || 0);
     const finMeter = Math.max(prevMeter, parseFloat(document.getElementById('vacateFinalMeter').value) || prevMeter);
     const rate = Math.max(0, parseFloat(document.getElementById('vacateElecRate').value) || 10);
-    const advance = Math.max(0, parseFloat(document.getElementById('vacateAdvanceAdj').value) || 0);
+    const outstanding = Math.max(0, parseFloat(document.getElementById('vacateOutstandingBills').value) || 0);
+    const otherCharges = Math.max(0, parseFloat(document.getElementById('vacateOtherCharges').value) || 0);
+
     const deposit = Math.max(0, parseFloat(document.getElementById('vacateDepositAdj').value) || 0);
+    const advance = Math.max(0, parseFloat(document.getElementById('vacateAdvanceAdj').value) || 0);
 
     let extraDays = 0;
     if (endStr && outStr) {
@@ -2147,33 +2368,65 @@
     const elecUnits = Math.max(0, finMeter - prevMeter);
     const elecCharge = Math.round(elecUnits * rate * 100) / 100;
 
-    const totalCharges = Math.round((extraRent + elecCharge) * 100) / 100;
-    const deductions = advance + deposit;
-    const netAmount = Math.round((totalCharges - deductions) * 100) / 100;
+    // Total Final Charges = Extra Stay Rent + Electricity Charge + Outstanding Bills + Other Charges
+    const totalFinalCharges = Math.round((extraRent + elecCharge + outstanding + otherCharges) * 100) / 100;
+
+    // Total Available Funds = Total Security Deposit + Refundable Advance Rent
+    const availableFunds = Math.round((deposit + advance) * 100) / 100;
+
+    // Net Settlement = Total Security Deposit + Refundable Advance Rent - Total Final Charges
+    const netDifference = Math.round((availableFunds - totalFinalCharges) * 100) / 100;
 
     document.getElementById('modalExtraDaysText').textContent = `${extraDays} day(s) (₹${dailyRate.toFixed(2)}/day)`;
     document.getElementById('modalExtraRentText').textContent = `₹${extraRent.toFixed(2)}`;
     document.getElementById('modalElecChargeText').textContent = `₹${elecCharge.toFixed(2)} (${elecUnits} units)`;
-    document.getElementById('modalDeductionsText').textContent = `-₹${deductions.toFixed(2)}`;
+    document.getElementById('modalOutstandingBillsText').textContent = `₹${outstanding.toFixed(2)}`;
+    document.getElementById('modalOtherChargesText').textContent = `₹${otherCharges.toFixed(2)}`;
+    document.getElementById('modalTotalChargesText').textContent = `₹${totalFinalCharges.toFixed(2)}`;
+    document.getElementById('modalAvailableFundsText').textContent = `₹${availableFunds.toFixed(2)} (Dep: ₹${deposit} + Adv: ₹${advance})`;
 
     const labelEl = document.getElementById('modalNetBalanceLabel');
     const amtEl = document.getElementById('modalNetBalanceAmount');
+    const msgEl = document.getElementById('modalPartyMessageText');
+    const badgeEl = document.getElementById('modalPaymentStatusBadge');
+    const bannerEl = document.getElementById('modalSettlementBanner');
 
-    if (netAmount > 0) {
-      labelEl.textContent = 'AMOUNT TO COLLECT FROM TENANT:';
-      labelEl.style.color = '#EF4444';
-      amtEl.textContent = `₹${Math.abs(netAmount).toFixed(2)}`;
-      amtEl.style.color = '#EF4444';
-    } else if (netAmount < 0) {
-      labelEl.textContent = 'NET REFUNDABLE TO TENANT:';
+    if (netDifference > 0) {
+      // Case A: Refund Payable to Tenant
+      labelEl.textContent = 'REFUND PAYABLE TO TENANT:';
       labelEl.style.color = '#10B981';
-      amtEl.textContent = `₹${Math.abs(netAmount).toFixed(2)}`;
+      amtEl.textContent = `₹${netDifference.toFixed(2)}`;
       amtEl.style.color = '#10B981';
+      msgEl.textContent = `The landlord must refund ₹${netDifference.toLocaleString('en-IN', { minimumFractionDigits: 2 })} to the tenant.`;
+      msgEl.style.color = '#10B981';
+      badgeEl.className = 'unit-badge badge-refund-pending';
+      badgeEl.textContent = 'REFUND PENDING';
+      bannerEl.style.borderColor = '#10B981';
+      bannerEl.style.background = 'rgba(16, 185, 129, 0.08)';
+    } else if (netDifference < 0) {
+      // Case B: Payment Payable by Tenant
+      labelEl.textContent = 'PAYMENT PAYABLE BY TENANT:';
+      labelEl.style.color = '#EF4444';
+      amtEl.textContent = `₹${Math.abs(netDifference).toFixed(2)}`;
+      amtEl.style.color = '#EF4444';
+      msgEl.textContent = `The tenant must pay ₹${Math.abs(netDifference).toLocaleString('en-IN', { minimumFractionDigits: 2 })} to the landlord.`;
+      msgEl.style.color = '#EF4444';
+      badgeEl.className = 'unit-badge badge-payment-pending';
+      badgeEl.textContent = 'PAYMENT PENDING';
+      bannerEl.style.borderColor = '#EF4444';
+      bannerEl.style.background = 'rgba(239, 68, 68, 0.08)';
     } else {
-      labelEl.textContent = 'BALANCE ZERO (FULLY SETTLED):';
+      // Case C: Fully Settled (Zero Balance)
+      labelEl.textContent = 'FULLY SETTLED:';
       labelEl.style.color = '#9CA3AF';
       amtEl.textContent = `₹0.00`;
       amtEl.style.color = '#F9FAFB';
+      msgEl.textContent = 'No amount is payable by either party.';
+      msgEl.style.color = '#9CA3AF';
+      badgeEl.className = 'unit-badge badge-fully-settled';
+      badgeEl.textContent = 'FULLY SETTLED';
+      bannerEl.style.borderColor = 'var(--border-subtle)';
+      bannerEl.style.background = 'var(--bg-surface-elevated)';
     }
 
     state.currentVacate.computed = {
@@ -2182,10 +2435,13 @@
       extraRent,
       elecUnits,
       elecCharge,
-      totalCharges,
+      outstanding,
+      otherCharges,
+      totalFinalCharges,
       advance,
       deposit,
-      netAmount,
+      availableFunds,
+      netDifference,
       periodEnd: endStr,
       moveOutDate: outStr,
       policy: policy === 'fixed30' ? 'Fixed 30 Days' : 'Actual Month Days'
@@ -2197,34 +2453,100 @@
     if (!state.currentVacate || !state.currentVacate.computed) return;
 
     const { tenant, unit, computed } = state.currentVacate;
-    const settlementNum = `SET-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const year = new Date().getFullYear();
+    const sameYearSettlements = state.settlements.filter(s => s.settlementNumber && s.settlementNumber.startsWith(`SET-${year}-`));
+    const nextSeq = sameYearSettlements.length + 1;
+    const settlementNum = `SET-${year}-${String(nextSeq).padStart(5, '0')}`;
+
+    const prop = state.properties.find(p => p.id === tenant.propertyId) || state.activeProperty;
+
+    const netDiff = computed.netDifference;
+    let finalStatus = 'zero_balance';
+    let settlementDirection = 'zero_balance';
+    let totalRefundableAmount = 0;
+    let totalPayableAmount = 0;
+    let amountPending = 0;
+    let paymentStatus = 'fully_settled';
+
+    if (netDiff > 0) {
+      finalStatus = 'refundable';
+      settlementDirection = 'refund_to_tenant';
+      totalRefundableAmount = netDiff;
+      amountPending = netDiff;
+      paymentStatus = 'refund_pending';
+    } else if (netDiff < 0) {
+      finalStatus = 'payable';
+      settlementDirection = 'payment_by_tenant';
+      totalPayableAmount = Math.abs(netDiff);
+      amountPending = Math.abs(netDiff);
+      paymentStatus = 'payment_pending';
+    }
+
+    const advanceAdjusted = Math.min(computed.advance, computed.totalFinalCharges);
+    const advanceRemaining = Math.max(0, computed.advance - advanceAdjusted);
+    const remainingChargesAfterAdv = Math.max(0, computed.totalFinalCharges - advanceAdjusted);
+    const depositAdjusted = Math.min(computed.deposit, remainingChargesAfterAdv);
+    const depositRemaining = Math.max(0, computed.deposit - depositAdjusted);
+
+    const otherNotes = (document.getElementById('vacateOtherChargesNotes')?.value || '').trim();
 
     const settlementRecord = {
       id: 'set_' + Date.now(),
       settlementNumber: settlementNum,
+      ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
+      propertyId: tenant.propertyId || (prop ? prop.id : ''),
+      propertyName: prop ? prop.name : 'Property',
+      tenantId: tenant.id,
+      unitId: tenant.unitId,
       tenantName: tenant.name,
-      tenantMobile: tenant.mobile,
+      tenantMobile: tenant.mobile || tenant.mobileNumber || '',
       unitNumber: tenant.unitNumber,
-      monthlyRent: tenant.rent,
-      periodEnd: computed.periodEnd,
+      monthlyRent: tenant.rent || tenant.monthlyRent || 0,
+      moveInDate: tenant.moveIn || tenant.moveInDate || '',
       moveOutDate: computed.moveOutDate,
+      periodEnd: computed.periodEnd,
       policy: computed.policy,
       extraDays: computed.extraDays,
       dailyRate: computed.dailyRate,
       extraStayRent: computed.extraRent,
       elecUnits: computed.elecUnits,
+      electricityUnits: computed.elecUnits,
       elecRate: parseFloat(document.getElementById('vacateElecRate').value) || 10,
+      electricityRate: parseFloat(document.getElementById('vacateElecRate').value) || 10,
       elecCharge: computed.elecCharge,
-      totalCharges: computed.totalCharges,
-      advanceAdjusted: computed.advance,
-      depositDeducted: computed.deposit,
-      netAmount: computed.netAmount,
+      electricityCharge: computed.elecCharge,
+      outstandingBillsBalance: computed.outstanding,
+      otherCharges: computed.otherCharges,
+      otherChargesNotes: otherNotes || undefined,
+      totalCharges: computed.totalFinalCharges,
+      advanceRentOriginal: computed.advance,
+      advanceRentAdjusted: advanceAdjusted,
+      advanceRentRemaining: advanceRemaining,
+      securityDepositOriginal: computed.deposit,
+      securityDepositAdjusted: depositAdjusted,
+      securityDepositRemaining: depositRemaining,
+      finalAmount: Math.abs(netDiff),
+      finalStatus: finalStatus,
+      settlementDirection: settlementDirection,
+      totalRefundableAmount: totalRefundableAmount,
+      totalPayableAmount: totalPayableAmount,
+      amountSettled: 0,
+      amountPending: amountPending,
+      paymentStatus: paymentStatus,
+      transactions: [],
       createdAt: new Date().toISOString()
     };
 
     tenant.status = 'vacated';
     tenant.moveOut = computed.moveOutDate;
+    tenant.moveOutDate = computed.moveOutDate;
     tenant.settlementNum = settlementNum;
+    tenant.settlementNumber = settlementNum;
+    tenant.loginStatus = 'disabled';
+    tenant.advance = advanceRemaining;
+    tenant.advanceAmount = advanceRemaining;
+    tenant.deposit = depositRemaining;
+    tenant.securityDeposit = depositRemaining;
 
     if (unit) {
       unit.status = 'vacant';
@@ -2236,18 +2558,16 @@
 
     if (state.currentUser && isFirebaseReady && fbDb) {
       try {
-        await fbDb.collection('settlements').add({
-          ownerId: state.currentUser.uid,
-          propertyId: tenant.propertyId || state.activeProperty.id,
-          tenantId: tenant.id,
-          unitId: tenant.unitId,
-          ...settlementRecord
-        });
+        const addedDoc = await fbDb.collection('settlements').add(settlementRecord);
+        settlementRecord.id = addedDoc.id;
 
         await fbDb.collection('tenants').doc(tenant.id).update({
           status: 'vacated',
+          loginStatus: 'disabled',
           moveOutDate: computed.moveOutDate,
           settlementNumber: settlementNum,
+          advanceAmount: advanceRemaining,
+          securityDeposit: depositRemaining,
           updatedAt: new Date().toISOString()
         });
 
@@ -2271,53 +2591,338 @@
   };
 
   // ==========================================================================
-  // 11. INVOICE RENDERING & SHARING
+  // 10.5 SETTLEMENT TRANSACTIONS (REFUND & PAYMENT TRACKING)
   // ==========================================================================
+  window.openRecordSettlementTxModal = function (settlementId, forcedType) {
+    const settlement = state.settlements.find(s => s.id === settlementId || s.settlementNumber === settlementId);
+    if (!settlement) {
+      showToast('Settlement record not found!', 'error');
+      return;
+    }
+
+    const statusInfo = computeSettlementStatus(settlement);
+    if (statusInfo.status === 'fully_settled' || statusInfo.amountPending <= 0) {
+      showToast('This settlement is already fully settled!', 'info');
+      return;
+    }
+
+    const type = forcedType || (statusInfo.direction === 'refund_to_tenant' ? 'refund' : 'payment_received');
+    document.getElementById('settlementTxSettlementId').value = settlement.id;
+    document.getElementById('settlementTxType').value = type;
+
+    const titleEl = document.getElementById('settlementTxModalTitle');
+    titleEl.textContent = type === 'refund' ? 'Record Refund to Tenant' : 'Record Payment Received from Tenant';
+
+    document.getElementById('settlementTxPendingText').textContent = `₹${statusInfo.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    document.getElementById('settlementTxPendingText').style.color = type === 'refund' ? '#10B981' : '#EF4444';
+    document.getElementById('settlementTxHelperText').textContent = type === 'refund'
+      ? `Maximum refundable balance: ₹${statusInfo.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+      : `Maximum receivable balance: ₹${statusInfo.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+
+    document.getElementById('settlementTxAmount').value = statusInfo.amountPending;
+    document.getElementById('settlementTxAmount').max = statusInfo.amountPending;
+    document.getElementById('settlementTxDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('settlementTxReference').value = '';
+    document.getElementById('settlementTxNotes').value = '';
+
+    openModal('modalRecordSettlementTx');
+  };
+
+  window.handleRecordSettlementTx = async function (e) {
+    e.preventDefault();
+    const btn = document.getElementById('recordSettlementTxSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    const settlementId = document.getElementById('settlementTxSettlementId').value;
+    const type = document.getElementById('settlementTxType').value;
+    const amount = parseFloat(document.getElementById('settlementTxAmount').value) || 0;
+    const date = document.getElementById('settlementTxDate').value || new Date().toISOString().split('T')[0];
+    const method = document.getElementById('settlementTxMethod').value;
+    const ref = (document.getElementById('settlementTxReference').value || '').trim();
+    const notes = (document.getElementById('settlementTxNotes').value || '').trim();
+
+    const settlement = state.settlements.find(s => s.id === settlementId || s.settlementNumber === settlementId);
+    if (!settlement) {
+      showToast('Settlement not found!', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Confirm Transaction';
+      return;
+    }
+
+    const currentStatus = computeSettlementStatus(settlement);
+    if (amount <= 0) {
+      showToast('Transaction amount must be greater than zero.', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Confirm Transaction';
+      return;
+    }
+
+    if (amount > currentStatus.amountPending + 0.01) {
+      showToast(`Amount (₹${amount}) exceeds remaining pending balance (₹${currentStatus.amountPending}).`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Confirm Transaction';
+      return;
+    }
+
+    const newTx = {
+      id: `stx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      settlementId: settlement.id,
+      tenantId: settlement.tenantId,
+      ownerId: settlement.ownerId || (state.currentUser ? state.currentUser.uid : 'demo-user-1'),
+      type: type,
+      amount: Math.round(amount * 100) / 100,
+      date: date,
+      paymentMethod: method,
+      transactionReference: ref || undefined,
+      notes: notes || undefined,
+      createdAt: new Date().toISOString()
+    };
+
+    const updatedTransactions = [...(settlement.transactions || []), newTx];
+    const newStatus = computeSettlementStatus({
+      ...settlement,
+      transactions: updatedTransactions
+    });
+
+    settlement.transactions = updatedTransactions;
+    settlement.amountSettled = newStatus.amountSettled;
+    settlement.amountPending = newStatus.amountPending;
+    settlement.paymentStatus = newStatus.status;
+
+    if (state.currentUser && isFirebaseReady && fbDb && settlement.id) {
+      try {
+        await fbDb.collection('settlements').doc(settlement.id).update({
+          transactions: updatedTransactions,
+          amountSettled: newStatus.amountSettled,
+          amountPending: newStatus.amountPending,
+          paymentStatus: newStatus.status,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Error updating settlement in Firestore:', err);
+        showToast(`Failed to update settlement: ${err.message}`, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Confirm Transaction';
+        return;
+      }
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Confirm Transaction';
+    closeModal('modalRecordSettlementTx');
+    renderSettlementsList();
+    window.viewSettlementInvoice(settlement);
+    showToast(`${type === 'refund' ? 'Refund' : 'Payment'} of ₹${amount.toLocaleString('en-IN')} recorded successfully!`, 'success');
+  };
+
+  window.deleteSettlementTx = async function (settlementId, txId) {
+    if (!confirm('Are you sure you want to remove this transaction? Balances will be recalculated.')) return;
+    const settlement = state.settlements.find(s => s.id === settlementId || s.settlementNumber === settlementId);
+    if (!settlement) return;
+
+    const updatedTransactions = (settlement.transactions || []).filter(t => t.id !== txId);
+    const newStatus = computeSettlementStatus({
+      ...settlement,
+      transactions: updatedTransactions
+    });
+
+    settlement.transactions = updatedTransactions;
+    settlement.amountSettled = newStatus.amountSettled;
+    settlement.amountPending = newStatus.amountPending;
+    settlement.paymentStatus = newStatus.status;
+
+    if (state.currentUser && isFirebaseReady && fbDb && settlement.id) {
+      try {
+        await fbDb.collection('settlements').doc(settlement.id).update({
+          transactions: updatedTransactions,
+          amountSettled: newStatus.amountSettled,
+          amountPending: newStatus.amountPending,
+          paymentStatus: newStatus.status,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Error removing settlement transaction:', err);
+      }
+    }
+
+    renderSettlementsList();
+    window.viewSettlementInvoice(settlement);
+    showToast('Transaction removed successfully!', 'success');
+  };
+
+  // ==========================================================================
+  // 11. INVOICE RENDERING & SHARING (FINAL SETTLEMENT STATEMENT)
+  // ==========================================================================
+  let _activeViewingSettlement = null;
+
   window.viewSettlementInvoice = function (settlement) {
     if (typeof settlement === 'string') {
-      settlement = state.settlements.find(s => s.settlementNumber === settlement) || state.settlements[0];
+      settlement = state.settlements.find(s => s.settlementNumber === settlement || s.id === settlement) || state.settlements[0];
     }
     if (!settlement) return;
+
+    _activeViewingSettlement = settlement;
 
     const property = state.properties.find(p => p.id === (settlement.propertyId || (state.activeProperty ? state.activeProperty.id : '')));
     document.getElementById('invPropertyName').textContent = property ? property.name : 'Rentora Property';
     document.getElementById('invSettlementNum').textContent = settlement.settlementNumber;
     document.getElementById('invDate').textContent = `Date: ${new Date(settlement.createdAt || Date.now()).toLocaleDateString('en-IN')}`;
     document.getElementById('invTenantName').textContent = settlement.tenantName;
-    document.getElementById('invTenantMobile').textContent = settlement.tenantMobile;
+    document.getElementById('invTenantMobile').textContent = settlement.tenantMobile || '—';
     document.getElementById('invUnitName').textContent = `Unit ${settlement.unitNumber}`;
-    document.getElementById('invPeriodEnd').textContent = settlement.periodEnd;
-    document.getElementById('invMoveOut').textContent = settlement.moveOutDate;
-    document.getElementById('invPolicy').textContent = settlement.policy;
+    document.getElementById('invPeriodEnd').textContent = settlement.periodEnd || '—';
+    document.getElementById('invMoveOut').textContent = settlement.moveOutDate || '—';
+    document.getElementById('invPolicy').textContent = settlement.policy || 'Fixed 30 Days';
 
-    document.getElementById('invExtraDaysMetric').textContent = `${settlement.extraDays} Days`;
-    document.getElementById('invDailyRateMetric').textContent = `₹${Number(settlement.dailyRate).toFixed(2)}/day`;
-    document.getElementById('invExtraRentVal').textContent = `₹${Number(settlement.extraStayRent).toFixed(2)}`;
+    // Status Info & Summary Box
+    const statusInfo = computeSettlementStatus(settlement);
 
-    document.getElementById('invElecUnitsMetric').textContent = `${settlement.elecUnits} Units`;
-    document.getElementById('invElecRateMetric').textContent = `₹${Number(settlement.elecRate || 10).toFixed(2)}/unit`;
-    document.getElementById('invElecChargeVal').textContent = `₹${Number(settlement.elecCharge).toFixed(2)}`;
+    const statusBadge = document.getElementById('invStatusBadge');
+    statusBadge.className = `unit-badge ${statusInfo.badgeClass}`;
+    statusBadge.textContent = statusInfo.statusLabel;
 
-    document.getElementById('invTotalChargesVal').textContent = `₹${Number(settlement.totalCharges).toFixed(2)}`;
-    document.getElementById('invAdvanceVal').textContent = `-₹${Number(settlement.advanceAdjusted).toFixed(2)}`;
-    document.getElementById('invDepositVal').textContent = `-₹${Number(settlement.depositDeducted).toFixed(2)}`;
+    const boxStatusBadge = document.getElementById('invBoxStatusBadge');
+    boxStatusBadge.className = `unit-badge ${statusInfo.badgeClass}`;
+    boxStatusBadge.textContent = statusInfo.statusLabel;
 
-    const finalLabel = document.getElementById('invFinalLabel');
-    const finalVal = document.getElementById('invNetTotalVal');
+    const depositOriginal = Number(settlement.securityDepositOriginal !== undefined ? settlement.securityDepositOriginal : (settlement.depositDeducted || 0));
+    const advanceOriginal = Number(settlement.advanceRentOriginal !== undefined ? settlement.advanceRentOriginal : (settlement.advanceAdjusted || 0));
+    const totalCharges = Number(settlement.totalCharges || 0);
 
-    if (settlement.netAmount > 0) {
-      finalLabel.textContent = 'FINAL AMOUNT PAYABLE BY TENANT:';
-      finalLabel.style.color = '#EF4444';
-      finalVal.textContent = `₹${Math.abs(settlement.netAmount).toFixed(2)}`;
-      finalVal.style.color = '#EF4444';
+    document.getElementById('invSummaryDeposit').textContent = `₹${depositOriginal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    document.getElementById('invSummaryAdvance').textContent = `₹${advanceOriginal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    document.getElementById('invSummaryCharges').textContent = `₹${totalCharges.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    document.getElementById('invSummaryNetAmount').textContent = `₹${statusInfo.targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    document.getElementById('invSummaryNetAmount').style.color = statusInfo.direction === 'refund_to_tenant' ? '#10B981' : statusInfo.direction === 'payment_by_tenant' ? '#EF4444' : '#6B7280';
+
+    document.getElementById('invDirectionTitle').textContent = statusInfo.directionTitle;
+    document.getElementById('invDirectionTitle').style.color = statusInfo.direction === 'refund_to_tenant' ? '#10B981' : statusInfo.direction === 'payment_by_tenant' ? '#EF4444' : '#6B7280';
+    document.getElementById('invPartyMessage').textContent = statusInfo.partyMessage;
+
+    document.getElementById('invRemainingPending').textContent = `₹${statusInfo.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    document.getElementById('invRemainingPending').style.color = statusInfo.amountPending > 0 ? (statusInfo.direction === 'refund_to_tenant' ? '#10B981' : '#EF4444') : '#10B981';
+
+    // Action buttons container in modal header
+    const actionsContainer = document.getElementById('invActionBtnsContainer');
+    actionsContainer.innerHTML = '';
+    if (statusInfo.amountPending > 0) {
+      if (statusInfo.direction === 'refund_to_tenant') {
+        actionsContainer.innerHTML = `
+          <button class="btn btn-emerald btn-sm" onclick="openRecordSettlementTxModal('${settlement.id}', 'refund')">
+            + Record Refund
+          </button>
+        `;
+      } else if (statusInfo.direction === 'payment_by_tenant') {
+        actionsContainer.innerHTML = `
+          <button class="btn btn-primary btn-sm" onclick="openRecordSettlementTxModal('${settlement.id}', 'payment_received')">
+            + Record Payment Received
+          </button>
+        `;
+      }
+    }
+
+    // Itemized charges
+    document.getElementById('invExtraDaysMetric').textContent = `${settlement.extraDays ?? 0} Days`;
+    document.getElementById('invDailyRateMetric').textContent = `₹${Number(settlement.dailyRate || 0).toFixed(2)}/day`;
+    document.getElementById('invExtraRentVal').textContent = `₹${Number(settlement.extraStayRent || 0).toFixed(2)}`;
+
+    document.getElementById('invElecUnitsMetric').textContent = `${settlement.elecUnits ?? settlement.electricityUnits ?? 0} Units`;
+    document.getElementById('invElecRateMetric').textContent = `₹${Number(settlement.elecRate || settlement.electricityRate || 10).toFixed(2)}/unit`;
+    document.getElementById('invElecChargeVal').textContent = `₹${Number(settlement.elecCharge || settlement.electricityCharge || 0).toFixed(2)}`;
+
+    const outBal = Number(settlement.outstandingBillsBalance || 0);
+    document.getElementById('invOutstandingVal').textContent = `₹${outBal.toFixed(2)}`;
+
+    const otherBal = Number(settlement.otherCharges || 0);
+    document.getElementById('invOtherChargesVal').textContent = `₹${otherBal.toFixed(2)}`;
+    document.getElementById('invOtherNotes').textContent = settlement.otherChargesNotes ? `(${settlement.otherChargesNotes})` : '';
+
+    document.getElementById('invTotalChargesVal').textContent = `₹${totalCharges.toFixed(2)}`;
+
+    // Settlement Transactions list
+    const txContainer = document.getElementById('invTxHistoryContainer');
+    const txCountEl = document.getElementById('invTxCount');
+    const txs = settlement.transactions || [];
+    txCountEl.textContent = `${txs.length} Transaction${txs.length === 1 ? '' : 's'}`;
+
+    if (txs.length === 0) {
+      txContainer.innerHTML = `
+        <div style="text-align: center; padding: 14px; background: var(--bg-surface-elevated); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 0.85rem;">
+          No settlement payments or refunds recorded yet.
+        </div>
+      `;
     } else {
-      finalLabel.textContent = 'FINAL NET REFUNDABLE TO TENANT:';
-      finalLabel.style.color = '#10B981';
-      finalVal.textContent = `₹${Math.abs(settlement.netAmount).toFixed(2)}`;
-      finalVal.style.color = '#10B981';
+      txContainer.innerHTML = `
+        <div style="overflow-x: auto;">
+          <table class="settlement-tx-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th style="text-align: right;">Amount (₹)</th>
+                <th>Payment Mode</th>
+                <th>Reference</th>
+                <th>Notes</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${txs.map(t => {
+                const isRef = t.type === 'refund';
+                return `
+                  <tr>
+                    <td>${t.date || '—'}</td>
+                    <td>
+                      <span class="unit-badge ${isRef ? 'badge-partially-refunded' : 'badge-paid'}" style="font-size: 0.72rem;">
+                        ${isRef ? 'REFUND PAID' : 'PAYMENT RECEIVED'}
+                      </span>
+                    </td>
+                    <td style="text-align: right; font-weight: 700; color: ${isRef ? '#10B981' : 'var(--primary)'};">
+                      ₹${Number(t.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td style="text-transform: uppercase;">${t.paymentMethod || 'UPI'}</td>
+                    <td style="font-family: monospace; font-size: 0.78rem;">${t.transactionReference || '—'}</td>
+                    <td style="font-size: 0.8rem; color: var(--text-secondary);">${t.notes || '—'}</td>
+                    <td style="text-align: right;">
+                      <button class="btn btn-outline btn-sm" style="color: var(--danger); padding: 2px 6px; font-size: 0.75rem;" onclick="deleteSettlementTx('${settlement.id}', '${t.id}')" title="Delete transaction">
+                        &times;
+                      </button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
     }
 
     openModal('modalSettlementInvoice');
+  };
+
+  window.downloadSettlementPDF = function () {
+    const settlement = _activeViewingSettlement;
+    if (!settlement) {
+      showToast('Settlement not selected!', 'error');
+      return;
+    }
+
+    if (typeof html2pdf === 'undefined') {
+      alert('PDF generator library loading... please try again.');
+      return;
+    }
+
+    const element = document.getElementById('printableInvoiceArea');
+    const opt = {
+      margin: [10, 10, 10, 10],
+      filename: `Rentora_Settlement_${settlement.settlementNumber || 'SETTLEMENT'}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save();
   };
 
   window.printInvoice = function () {
@@ -2325,12 +2930,18 @@
   };
 
   window.shareInvoiceWhatsApp = function () {
-    const num = document.getElementById('invSettlementNum').textContent;
-    const name = document.getElementById('invTenantName').textContent;
-    const amt = document.getElementById('invNetTotalVal').textContent;
-    const label = document.getElementById('invFinalLabel').textContent;
+    const settlement = _activeViewingSettlement;
+    if (!settlement) return;
 
-    const text = encodeURIComponent(`*Rentora Move-Out Settlement Receipt*\nSettlement: ${num}\nTenant: ${name}\n${label} ${amt}\nGenerated via Rentora Cloud Platform.`);
+    const statusInfo = computeSettlementStatus(settlement);
+    const num = settlement.settlementNumber;
+    const name = settlement.tenantName;
+    const dir = statusInfo.directionTitle;
+    const amt = `₹${statusInfo.targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    const status = statusInfo.statusLabel;
+    const pending = `₹${statusInfo.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+
+    const text = encodeURIComponent(`*Rentora Move-Out Settlement Receipt*\nSettlement: ${num}\nTenant: ${name}\nDirection: ${dir} (${amt})\nStatus: ${status}\nPending Balance: ${pending}\nGenerated via Rentora Cloud Platform.`);
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
   };
 
@@ -2608,34 +3219,54 @@
       return;
     }
 
-    container.innerHTML = state.settlements.map(s => `
-      <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
-        <div>
-          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
-            <strong style="font-size: 1.05rem;">${s.tenantName}</strong>
-            <span class="unit-badge badge-vacated">${s.settlementNumber}</span>
-          </div>
-          <div style="font-size: 0.84rem; color: var(--text-secondary);">
-            Unit ${s.unitNumber} • Move-Out: ${s.moveOutDate} • Extra Stay: ${s.extraDays} days
-          </div>
-        </div>
+    container.innerHTML = state.settlements.map(s => {
+      const statusInfo = computeSettlementStatus(s);
+      const isPayable = statusInfo.direction === 'payment_by_tenant';
+      const isRefundable = statusInfo.direction === 'refund_to_tenant';
+      const amountColor = isRefundable ? '#10B981' : isPayable ? '#EF4444' : '#6B7280';
 
-        <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="text-align: right;">
-            <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">
-              ${s.netAmount > 0 ? 'Payable by Tenant' : 'Refundable to Tenant'}
+      return `
+        <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap;">
+              <strong style="font-size: 1.05rem;">${s.tenantName}</strong>
+              <span class="unit-badge badge-vacated">${s.settlementNumber}</span>
+              <span class="unit-badge ${statusInfo.badgeClass}">${statusInfo.statusLabel}</span>
             </div>
-            <div style="font-size: 1.25rem; font-weight: 800; color: ${s.netAmount > 0 ? '#EF4444' : '#10B981'};">
-              ₹${Math.abs(s.netAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            <div style="font-size: 0.84rem; color: var(--text-secondary);">
+              Unit ${s.unitNumber || '—'} • Move-Out: ${s.moveOutDate || '—'} • Extra Stay: ${s.extraDays ?? 0} days
             </div>
           </div>
 
-          <button class="btn btn-secondary btn-sm" onclick="viewSettlementInvoice('${s.settlementNumber}')">
-            View / Print Invoice
-          </button>
+          <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+            <div style="text-align: right;">
+              <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">
+                ${statusInfo.directionTitle}
+              </div>
+              <div style="font-size: 1.25rem; font-weight: 800; color: ${amountColor};">
+                ₹${statusInfo.targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </div>
+              ${statusInfo.amountPending > 0 && statusInfo.amountSettled > 0 ? `
+                <div style="font-size: 0.75rem; color: var(--text-muted);">
+                  Settled: ₹${statusInfo.amountSettled.toLocaleString('en-IN')} • Due: ₹${statusInfo.amountPending.toLocaleString('en-IN')}
+                </div>
+              ` : ''}
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center;">
+              ${statusInfo.amountPending > 0 ? (
+                statusInfo.direction === 'refund_to_tenant'
+                  ? `<button class="btn btn-emerald btn-sm" onclick="openRecordSettlementTxModal('${s.id}', 'refund')">Record Refund</button>`
+                  : `<button class="btn btn-primary btn-sm" onclick="openRecordSettlementTxModal('${s.id}', 'payment_received')">Record Payment</button>`
+              ) : ''}
+              <button class="btn btn-secondary btn-sm" onclick="viewSettlementInvoice('${s.settlementNumber || s.id}')">
+                View Details
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   }
 
   // ==========================================================================
@@ -2673,35 +3304,122 @@
     }
   };
 
-  // Helper: Decorate bills matching mobile app business logic
-  function decorateWebBills(bills) {
+  // ==========================================================================
+  // CANONICAL BILL SORTING, DECORATING & OUTSTANDING HELPERS (MOBILE 1:1)
+  // ==========================================================================
+  function sortBillsChronological(bills) {
     if (!Array.isArray(bills)) return [];
-    return bills.map(b => {
-      const subtotal = Number(b.subtotal) || ((Number(b.rent) || 0) + (Number(b.electricityCharge) || 0) + (Number(b.waterCharge) || 0) + (Number(b.parkingCharge) || 0) + (Number(b.maintenanceCharge) || 0) + (Number(b.otherCharges) || 0));
-      const prevDue = Number(b.previousDue) || 0;
-      const totalAmount = b.totalAmount !== undefined ? Number(b.totalAmount) : (subtotal + prevDue);
-      const paidAmount = Number(b.paidAmount) || 0;
-      const remainingAmount = b.remainingAmount !== undefined ? Number(b.remainingAmount) : Math.max(0, totalAmount - paidAmount);
+    return [...bills].sort((a, b) => {
+      const monthA = a.billingMonth || '';
+      const monthB = b.billingMonth || '';
+      if (monthA !== monthB) {
+        return monthA.localeCompare(monthB);
+      }
+      const numA = a.billNumber || '';
+      const numB = b.billNumber || '';
+      if (numA && numB && numA !== numB) {
+        return numA.localeCompare(numB);
+      }
+      const dateA = a.createdAt || '';
+      const dateB = b.createdAt || '';
+      return dateA.localeCompare(dateB);
+    });
+  }
 
-      let status = b.paymentStatus || 'unpaid';
-      if (remainingAmount <= 0 && paidAmount > 0) {
-        status = 'paid';
-      } else if (paidAmount > 0 && remainingAmount > 0) {
-        status = 'partial';
-      } else if (remainingAmount > 0 && paidAmount === 0) {
-        status = 'unpaid';
+  function decorateWebBills(tenantBills) {
+    if (!Array.isArray(tenantBills) || tenantBills.length === 0) return [];
+    const sorted = sortBillsChronological(tenantBills);
+
+    let accumulatedPriorRemaining = 0;
+
+    return sorted.map((bill, index) => {
+      const subtotal = bill.subtotal !== undefined 
+        ? Number(bill.subtotal) 
+        : ((Number(bill.rent) || 0) + (Number(bill.electricityCharge) || 0) + (Number(bill.waterCharge) || 0) + (Number(bill.parkingCharge) || 0) + (Number(bill.maintenanceCharge) || 0) + (Number(bill.otherCharges) || 0));
+
+      const previousDue = Math.max(0, Number(bill.previousDue) || 0);
+      const totalAmount = subtotal + previousDue;
+      const paidAmount = Number(bill.paidAmount) || 0;
+
+      const isClosed = bill.paymentStatus === 'paid' && (bill.remainingAmount === 0 || (bill.paidAmount !== undefined && Number(bill.paidAmount) >= totalAmount));
+      if (isClosed) {
+        accumulatedPriorRemaining = 0;
+        return {
+          ...bill,
+          subtotal,
+          previousDue,
+          totalAmount,
+          paidAmount: Math.max(paidAmount, totalAmount),
+          remainingAmount: 0,
+          paymentStatus: 'paid',
+          previousDuePaid: previousDue,
+          previousDueRemaining: 0,
+          currentBillPaid: subtotal,
+          currentBillRemaining: 0,
+          totalPaymentAllocated: totalAmount,
+        };
+      }
+
+      let previousDuePaid = 0;
+      let previousDueRemaining = 0;
+      let currentBillPaid = 0;
+      let currentBillRemaining = 0;
+      let remainingAmount = 0;
+
+      if (index === 0) {
+        previousDuePaid = Math.min(previousDue, paidAmount);
+        previousDueRemaining = Math.max(0, previousDue - previousDuePaid);
+
+        const remForCurrent = Math.max(0, paidAmount - previousDuePaid);
+        currentBillPaid = Math.min(subtotal, remForCurrent);
+        currentBillRemaining = Math.max(0, subtotal - currentBillPaid);
+
+        remainingAmount = previousDueRemaining + currentBillRemaining;
+        accumulatedPriorRemaining = remainingAmount;
+      } else {
+        previousDueRemaining = Math.min(previousDue, accumulatedPriorRemaining);
+        previousDuePaid = Math.max(0, previousDue - previousDueRemaining);
+
+        currentBillPaid = Math.min(subtotal, paidAmount);
+        currentBillRemaining = Math.max(0, subtotal - currentBillPaid);
+
+        remainingAmount = previousDueRemaining + currentBillRemaining;
+        accumulatedPriorRemaining = remainingAmount;
+      }
+
+      const totalPaymentAllocated = previousDuePaid + currentBillPaid;
+
+      let paymentStatus = 'unpaid';
+      if (remainingAmount === 0 && (totalAmount > 0 || paidAmount > 0)) {
+        paymentStatus = 'paid';
+      } else if (paidAmount > 0 || previousDuePaid > 0) {
+        paymentStatus = 'partial';
+      } else {
+        paymentStatus = 'unpaid';
       }
 
       return {
-        ...b,
+        ...bill,
+        previousDue,
         subtotal,
-        previousDue: prevDue,
         totalAmount,
         paidAmount,
         remainingAmount,
-        paymentStatus: status
+        paymentStatus,
+        previousDuePaid,
+        previousDueRemaining,
+        currentBillPaid,
+        currentBillRemaining,
+        totalPaymentAllocated,
       };
     });
+  }
+
+  function calculateTenantOutstanding(tenantBills) {
+    if (!Array.isArray(tenantBills) || tenantBills.length === 0) return 0;
+    const decorated = decorateWebBills(tenantBills);
+    const latest = decorated[decorated.length - 1];
+    return latest ? Number(latest.remainingAmount || 0) : 0;
   }
 
   // ==========================================================================
@@ -3150,13 +3868,17 @@
     document.getElementById('billPrevReading').value = prevReading;
     document.getElementById('billCurrReading').value = prevReading;
 
-    const elecRate = (tenant && tenant.electricityRatePerUnit) || (prop && prop.electricityRate) || 10;
+    const elecRate = (tenant && tenant.electricityRatePerUnit != null) ? tenant.electricityRatePerUnit : ((prop && prop.electricityRate) || 10);
     document.getElementById('billElecRate').value = elecRate;
 
     const rent = (tenant && tenant.rent) || (tenant && tenant.monthlyRent) || unit.rent || (prop && prop.defaultRent) || 12000;
     document.getElementById('billRent').value = rent;
 
-    const water = (tenant && tenant.waterFixedAmount) || (prop && prop.waterCharge) || 0;
+    const wType = tenant ? (tenant.waterBillType || (prop?.waterCharge > 0 ? 'fixed' : 'none')) : 'fixed';
+    let water = 0;
+    if (wType === 'fixed') {
+      water = (tenant && tenant.waterFixedAmount != null) ? tenant.waterFixedAmount : ((prop && prop.waterCharge) || 0);
+    }
     document.getElementById('billWater').value = water;
 
     const parking = (prop && prop.parkingCharge) || 0;
@@ -3166,8 +3888,8 @@
 
     let prevDue = 0;
     if (tenant) {
-      const prevUnpaid = state.bills.filter(b => b.tenantId === tenant.id && b.paymentStatus !== 'paid');
-      prevDue = prevUnpaid.reduce((sum, b) => sum + Number(b.remainingAmount || 0), 0);
+      const tenantBills = state.bills.filter(b => b.tenantId === tenant.id);
+      prevDue = calculateTenantOutstanding(tenantBills);
     }
     document.getElementById('billPrevDue').value = prevDue;
 
@@ -3175,12 +3897,26 @@
   };
 
   window.calculateLiveBill = function () {
+    const unitId = document.getElementById('billUnitSelect')?.value;
+    const unit = state.units.find(u => u.id === unitId);
+    const tenant = unit ? state.tenants.find(t => t.id === unit.currentTenantId || t.unitId === unit.id) : null;
+
     const prev = parseFloat(document.getElementById('billPrevReading').value) || 0;
     const curr = parseFloat(document.getElementById('billCurrReading').value) || 0;
     const rate = parseFloat(document.getElementById('billElecRate').value) || 0;
 
     const unitsConsumed = Math.max(0, curr - prev);
-    const elecCharge = unitsConsumed * rate;
+    let elecCharge = unitsConsumed * rate;
+    const eType = tenant ? (tenant.electricityBillType || 'perUnit') : 'perUnit';
+    if (eType === 'fixed') {
+      elecCharge = Number(tenant.electricityFixedAmount) || 0;
+      document.getElementById('billElecPreviewText').textContent = `Fixed Electricity Charge: ₹${elecCharge.toFixed(2)}`;
+    } else if (eType === 'none') {
+      elecCharge = 0;
+      document.getElementById('billElecPreviewText').textContent = `Electricity: Not Applicable (₹0.00)`;
+    } else {
+      document.getElementById('billElecPreviewText').textContent = `Units Consumed: ${unitsConsumed} • Electricity Total: ₹${elecCharge.toFixed(2)}`;
+    }
 
     const rent = parseFloat(document.getElementById('billRent').value) || 0;
     const water = parseFloat(document.getElementById('billWater').value) || 0;
@@ -3191,7 +3927,6 @@
     const subtotal = rent + elecCharge + water + parking + maint;
     const total = subtotal + prevDue;
 
-    document.getElementById('billElecPreviewText').textContent = `Units Consumed: ${unitsConsumed} • Electricity Total: ₹${elecCharge.toFixed(2)}`;
     document.getElementById('billLiveSubtotal').textContent = `₹${subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
     document.getElementById('billLiveTotal').textContent = `₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
   };
@@ -3211,7 +3946,18 @@
     const currReading = parseFloat(document.getElementById('billCurrReading').value) || 0;
     const elecRate = parseFloat(document.getElementById('billElecRate').value) || 0;
     const unitsConsumed = Math.max(0, currReading - prevReading);
-    const elecCharge = unitsConsumed * elecRate;
+
+    const unit = state.units.find(u => u.id === unitId);
+    const tenant = state.tenants.find(t => t.id === unit.currentTenantId || t.unitId === unit.id);
+    const prop = state.properties.find(p => p.id === propId);
+
+    const eType = tenant ? (tenant.electricityBillType || 'perUnit') : 'perUnit';
+    let elecCharge = unitsConsumed * elecRate;
+    if (eType === 'fixed') {
+      elecCharge = Number(tenant.electricityFixedAmount) || 0;
+    } else if (eType === 'none') {
+      elecCharge = 0;
+    }
 
     const rent = parseFloat(document.getElementById('billRent').value) || 0;
     const water = parseFloat(document.getElementById('billWater').value) || 0;
@@ -3221,10 +3967,6 @@
 
     const subtotal = rent + elecCharge + water + parking + maint;
     const totalAmount = subtotal + prevDue;
-
-    const unit = state.units.find(u => u.id === unitId);
-    const tenant = state.tenants.find(t => t.id === unit.currentTenantId || t.unitId === unit.id);
-    const prop = state.properties.find(p => p.id === propId);
 
     const year = new Date().getFullYear();
     const seq = state.bills.length + 1;
@@ -3246,8 +3988,13 @@
       electricityUnits: unitsConsumed,
       electricityRate: elecRate,
       electricityCharge: elecCharge,
+      electricityBillType: eType,
+      electricityFixedAmount: eType === 'fixed' ? elecCharge : 0,
+      electricityRatePerUnit: elecRate,
       rent,
       waterCharge: water,
+      waterBillType: tenant?.waterBillType || (water > 0 ? 'fixed' : 'none'),
+      waterFixedAmount: water,
       parkingCharge: parking,
       maintenanceCharge: maint,
       otherCharges: 0,
@@ -3305,7 +4052,17 @@
       statusBadge = `<span class="unit-badge badge-partial">Partially Paid</span>`;
     }
 
-    const billPayments = state.payments.filter(p => p.billId === bill.id);
+    const billPayments = state.payments.filter(p => {
+      if (p.billId === bill.id) return true;
+      if (Array.isArray(p.allocations)) {
+        return p.allocations.some(a => a.billId === bill.id && Number(a.amount) > 0);
+      }
+      return false;
+    });
+
+    const totalReceived = bill.totalPaymentAllocated !== undefined 
+      ? Number(bill.totalPaymentAllocated) 
+      : Number(bill.paidAmount || 0);
 
     bodyEl.innerHTML = `
       <div style="background: var(--bg-surface-elevated); padding: 18px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -3357,7 +4114,7 @@
           ${bill.parkingCharge > 0 ? `
             <tr style="border-bottom: 1px solid var(--border-subtle);">
               <td style="padding: 10px 12px; font-weight: 600;">Parking Space Fee</td>
-              <td style="padding: 10px 12px; text-align: center; color: var(--text-muted);">Monthly Allocated</td>
+              <td style="padding: 10px 12px; text-align: center; color: var(--text-muted);">Monthly Charge</td>
               <td style="padding: 10px 12px; text-align: right; font-weight: 600;">₹${Number(bill.parkingCharge).toFixed(2)}</td>
             </tr>
           ` : ''}
@@ -3382,10 +4139,24 @@
             <td colspan="2" style="padding: 12px; font-weight: 800;">TOTAL PAYABLE INVOICE AMOUNT</td>
             <td style="padding: 12px; text-align: right; font-weight: 800; color: var(--primary);">₹${Number(bill.totalAmount || 0).toFixed(2)}</td>
           </tr>
-          <tr style="color: #10B981;">
-            <td colspan="2" style="padding: 8px 12px; font-weight: 600;">Total Payments Recorded</td>
-            <td style="padding: 8px 12px; text-align: right; font-weight: 700;">-₹${Number(bill.paidAmount || 0).toFixed(2)}</td>
-          </tr>
+          ${totalReceived > 0 ? `
+            <tr style="color: #10B981; font-weight: 700;">
+              <td colspan="2" style="padding: 8px 12px;">Total Payment Received</td>
+              <td style="padding: 8px 12px; text-align: right;">-₹${totalReceived.toFixed(2)}</td>
+            </tr>
+            ${bill.previousDue > 0 && (Number(bill.previousDuePaid) || 0) > 0 ? `
+              <tr style="color: var(--text-muted); font-size: 0.8rem;">
+                <td colspan="2" style="padding: 2px 12px 2px 24px;">• Received for Previous Dues</td>
+                <td style="padding: 2px 12px; text-align: right; color: #10B981; font-weight: 600;">₹${Number(bill.previousDuePaid).toFixed(2)}</td>
+              </tr>
+            ` : ''}
+            ${bill.previousDue > 0 && (Number(bill.currentBillPaid) || 0) > 0 ? `
+              <tr style="color: var(--text-muted); font-size: 0.8rem;">
+                <td colspan="2" style="padding: 2px 12px 2px 24px;">• Received for Current Month</td>
+                <td style="padding: 2px 12px; text-align: right; color: #10B981; font-weight: 600;">₹${Number(bill.currentBillPaid).toFixed(2)}</td>
+              </tr>
+            ` : ''}
+          ` : ''}
           <tr style="background: var(--bg-surface-elevated); font-size: 1.15rem; color: ${bill.remainingAmount > 0 ? '#EF4444' : '#10B981'};">
             <td colspan="2" style="padding: 12px; font-weight: 800;">REMAINING BALANCE DUE:</td>
             <td style="padding: 12px; text-align: right; font-weight: 800;">₹${Number(bill.remainingAmount || 0).toFixed(2)}</td>
@@ -3396,20 +4167,40 @@
 
       ${billPayments.length > 0 ? `
         <div style="margin-top: 16px;">
-          <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 8px;">Payment Collection History</div>
+          <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 8px;">Payment Received History (${billPayments.length})</div>
           <div style="display: flex; flex-direction: column; gap: 8px;">
-            ${billPayments.map(p => `
-              <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface-elevated); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.88rem;">
-                <div>
-                  <span style="font-weight: 700; color: #10B981;">₹${Number(p.amount).toLocaleString('en-IN')}</span>
-                  <span style="color: var(--text-muted); font-size: 0.8rem; margin-left: 8px;">via ${(p.paymentMethod || 'upi').toUpperCase()}</span>
+            ${billPayments.map(p => {
+              const alloc = Array.isArray(p.allocations) ? p.allocations.find(a => a.billId === bill.id) : null;
+              const billAllocatedAmount = alloc ? Number(alloc.amount) : (Number(p.amount) || Number(p.amountPaid) || 0);
+              const isPartialAllocation = Array.isArray(p.allocations) && p.allocations.length > 0 && Number(p.amount) > billAllocatedAmount;
+              const pMonth = p.paymentDate ? p.paymentDate.slice(0, 7) : '';
+              const isDifferentMonth = pMonth && bill.billingMonth && pMonth !== bill.billingMonth;
+
+              return `
+                <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-surface-elevated); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.88rem; flex-wrap: wrap; gap: 8px;">
+                  <div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                      <span style="font-weight: 700; color: #10B981;">₹${billAllocatedAmount.toLocaleString('en-IN')}</span>
+                      <span style="color: var(--text-muted); font-size: 0.8rem;">via ${(p.paymentMethod || 'upi').toUpperCase()}</span>
+                      ${isDifferentMonth ? `
+                        <span style="background: rgba(79, 70, 229, 0.12); color: var(--primary); font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; font-weight: 700;">
+                          Received in ${pMonth} payment
+                        </span>
+                      ` : ''}
+                    </div>
+                    ${isPartialAllocation ? `
+                      <div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">
+                        part of ₹${Number(p.amount).toLocaleString('en-IN')} total received
+                      </div>
+                    ` : ''}
+                  </div>
+                  <div style="color: var(--text-secondary); font-size: 0.8rem; text-align: right;">
+                    <div>${p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : '')}</div>
+                    ${p.transactionId ? `<div style="font-family: monospace; font-size: 0.76rem; color: var(--text-muted);">${p.transactionId}</div>` : ''}
+                  </div>
                 </div>
-                <div style="color: var(--text-secondary); font-size: 0.8rem;">
-                  ${p.paymentDate || new Date(p.createdAt || Date.now()).toLocaleDateString('en-IN')}
-                  ${p.transactionId ? `• <span style="font-family: monospace;">${p.transactionId}</span>` : ''}
-                </div>
-              </div>
-            `).join('')}
+              `;
+            }).join('')}
           </div>
         </div>
       ` : ''}
@@ -3439,7 +4230,25 @@
   window.shareBillWhatsApp = function (billId) {
     const bill = state.bills.find(b => b.id === billId);
     if (!bill) return;
-    const text = encodeURIComponent(`*Rentora Rent Bill*\nBill #: ${bill.billNumber}\nMonth: ${formatMonthReadable(bill.billingMonth)}\nTotal Amount: ₹${bill.totalAmount}\nPaid: ₹${bill.paidAmount}\nDue Balance: ₹${bill.remainingAmount}\nDue Date: ${bill.dueDate}\nStatus: ${(bill.paymentStatus || '').toUpperCase()}`);
+    const tenant = state.tenants.find(t => t.id === bill.tenantId);
+    const totalReceived = bill.totalPaymentAllocated !== undefined ? Number(bill.totalPaymentAllocated) : Number(bill.paidAmount || 0);
+    const status = bill.paymentStatus || 'unpaid';
+
+    const text = encodeURIComponent(`*RENTORA - RENT INVOICE*
+Tenant: ${bill.tenantName || (tenant ? tenant.name : 'Tenant')}
+Bill Number: ${bill.billNumber}
+Billing Month: ${formatMonthReadable(bill.billingMonth)}
+- Rent: ₹${bill.rent || 0}
+- Electricity: ₹${bill.electricityCharge || 0} (${bill.electricityUnits || 0} units)
+${bill.waterCharge > 0 ? `- Water: ₹${bill.waterCharge}\n` : ''}${bill.parkingCharge > 0 ? `- Parking: ₹${bill.parkingCharge}\n` : ''}${bill.maintenanceCharge > 0 ? `- Maintenance: ₹${bill.maintenanceCharge}\n` : ''}${bill.previousDue > 0 ? `- Previous Dues: ₹${bill.previousDue}\n` : ''}
+Original Total Payable: ₹${bill.totalAmount}
+${totalReceived > 0 ? `Total payment received: ₹${totalReceived}\n` : ''}*REMAINING AMOUNT DUE: ₹${bill.remainingAmount}*
+
+Payment Status: *${status.toUpperCase()}*
+Due Date: *${bill.dueDate || 'N/A'}*
+
+_Generated via Rentora Platform._`);
+
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
   };
 
@@ -4333,7 +5142,7 @@
       return `
         <div class="payment-allocation-box" style="margin-top: 8px; margin-bottom: 10px; border: 1px solid #111827; background-color: #ffffff; page-break-inside: avoid; box-sizing: border-box; width: 100%;">
           <div style="background-color: #3b49df; color: #ffffff; padding: 5px 8px; font-weight: 800; font-size: 10px; display: flex; justify-content: space-between; align-items: center; box-sizing: border-box; width: 100%;">
-            <span>PAYMENT & ALLOCATION DETAILS</span>
+            <span>PAYMENT RECEIVED & TRANSACTION DETAILS</span>
             <span style="font-size: 9px; letter-spacing: 0.5px; text-transform: uppercase; white-space: nowrap;">STATUS: ${statusLabel}</span>
           </div>
           
@@ -4587,6 +5396,7 @@
     const instructionsInput = document.getElementById('settingsPaymentInstructions');
     const policySelect = document.getElementById('settingsExtraStayPolicy');
     const logoUrlInput = document.getElementById('settingsLogoUrl');
+    const signatureUrlInput = document.getElementById('settingsSignatureUrl');
     const noticeEl = document.getElementById('settingsLastSavedNotice');
 
     if (ownerNameInput) ownerNameInput.value = s.ownerName || (state.currentUser ? (state.currentUser.displayName || '') : '');
@@ -4597,6 +5407,7 @@
     if (instructionsInput) instructionsInput.value = s.paymentInstructions || 'Please pay by the due date to avoid late fees. Kindly send a payment screenshot for verification.';
     if (policySelect) policySelect.value = s.extraStayPolicy || 'fixed30';
     if (logoUrlInput) logoUrlInput.value = s.logoUrl || '';
+    if (signatureUrlInput) signatureUrlInput.value = s.signatureUrl || '';
 
     if (noticeEl) {
       if (s.updatedAt) {
@@ -4624,6 +5435,7 @@
     const paymentInstructions = document.getElementById('settingsPaymentInstructions')?.value.trim() || '';
     const extraStayPolicy = document.getElementById('settingsExtraStayPolicy')?.value || 'fixed30';
     const logoUrl = document.getElementById('settingsLogoUrl')?.value.trim() || '';
+    const signatureUrl = document.getElementById('settingsSignatureUrl')?.value.trim() || '';
 
     if (!ownerName) {
       showToast('Owner / Landlord Full Name is required', 'error');
@@ -4658,6 +5470,7 @@
       paymentInstructions: paymentInstructions || 'Please pay by the due date to avoid late fees. Kindly send a payment screenshot for verification.',
       extraStayPolicy,
       logoUrl,
+      signatureUrl,
       updatedAt: new Date().toISOString()
     };
 
@@ -4684,30 +5497,56 @@
     }
   };
 
-  window.openRecordPaymentModal = function (preselectedBillId) {
-    const pendingBills = state.bills.filter(b => b.remainingAmount > 0);
+  window.openRecordPaymentModal = function (preselectedTarget) {
+    const pendingBills = state.bills.filter(b => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid');
     const select = document.getElementById('paymentSelectBill');
 
-    if (pendingBills.length === 0) {
-      showToast('All bills are fully settled! No pending dues.', 'info');
-      return;
+    let isTenantTarget = false;
+    let targetTenantId = null;
+
+    if (typeof preselectedTarget === 'string' && preselectedTarget.startsWith('tenant:')) {
+      isTenantTarget = true;
+      targetTenantId = preselectedTarget.replace('tenant:', '');
     }
 
-    select.innerHTML = pendingBills.map(b => {
-      const tenant = state.tenants.find(t => t.id === b.tenantId);
-      const tName = b.tenantName || (tenant ? tenant.name : 'Tenant');
-      return `
-        <option value="${b.id}" data-due="${b.remainingAmount}">
-          ${b.billNumber || 'Bill'} - ${tName} (Unit ${b.unitNumber}) - Due: ₹${Number(b.remainingAmount).toLocaleString('en-IN')}
+    if (isTenantTarget) {
+      const tenant = state.tenants.find(t => t.id === targetTenantId);
+      if (!tenant) {
+        showToast('Tenant not found!', 'error');
+        return;
+      }
+      const tenantBills = state.bills.filter(b => b.tenantId === tenant.id);
+      const totalOutstanding = calculateTenantOutstanding(tenantBills);
+
+      select.innerHTML = `
+        <option value="tenant:${tenant.id}" data-due="${totalOutstanding}">
+          All Outstanding Bills for ${tenant.name} (Oldest-First Due Clearing) — Total Due: ₹${Number(totalOutstanding).toLocaleString('en-IN')}
         </option>
       `;
-    }).join('');
 
-    if (preselectedBillId && pendingBills.some(b => b.id === preselectedBillId)) {
-      select.value = preselectedBillId;
+      document.getElementById('paymentAmount').value = totalOutstanding > 0 ? totalOutstanding : (tenant.rent || 0);
+    } else {
+      if (pendingBills.length === 0) {
+        showToast('All bills are fully settled! No pending dues.', 'info');
+        return;
+      }
+
+      select.innerHTML = pendingBills.map(b => {
+        const tenant = state.tenants.find(t => t.id === b.tenantId);
+        const tName = b.tenantName || (tenant ? tenant.name : 'Tenant');
+        return `
+          <option value="${b.id}" data-due="${b.remainingAmount || 0}" data-tenant="${b.tenantId}">
+            ${b.billNumber || 'Bill'} - ${tName} (Unit ${b.unitNumber}) - Due: ₹${Number(b.remainingAmount || 0).toLocaleString('en-IN')}
+          </option>
+        `;
+      }).join('');
+
+      if (preselectedTarget && pendingBills.some(b => b.id === preselectedTarget)) {
+        select.value = preselectedTarget;
+      }
+
+      window.handlePaymentBillSelect(select.value);
     }
-
-    window.handlePaymentBillSelect(select.value);
 
     document.getElementById('paymentDate').value = new Date().toISOString().split('T')[0];
     document.getElementById('paymentTxnId').value = '';
@@ -4716,10 +5555,19 @@
   };
 
   window.handlePaymentBillSelect = function (billId) {
+    if (!billId) return;
+    if (billId.startsWith('tenant:')) {
+      const tId = billId.replace('tenant:', '');
+      const tenant = state.tenants.find(t => t.id === tId);
+      const tenantBills = state.bills.filter(b => b.tenantId === tId);
+      const out = calculateTenantOutstanding(tenantBills);
+      document.getElementById('paymentAmount').value = out;
+      return;
+    }
     const bill = state.bills.find(b => b.id === billId);
     if (bill) {
-      document.getElementById('paymentAmount').value = bill.remainingAmount;
-      document.getElementById('paymentAmount').max = bill.remainingAmount;
+      const due = Number(bill.remainingAmount !== undefined ? bill.remainingAmount : (bill.totalAmount || 0));
+      document.getElementById('paymentAmount').value = due;
     }
   };
 
@@ -4727,65 +5575,178 @@
     e.preventDefault();
     const btn = document.getElementById('recordPaymentSubmitBtn');
     btn.disabled = true;
-    btn.textContent = 'Recording...';
+    btn.textContent = 'Recording Payment...';
 
-    const billId = document.getElementById('paymentSelectBill').value;
+    const selectedTarget = document.getElementById('paymentSelectBill').value;
     const amount = parseFloat(document.getElementById('paymentAmount').value) || 0;
-    const paymentDate = document.getElementById('paymentDate').value;
+    const paymentDate = document.getElementById('paymentDate').value || new Date().toISOString().split('T')[0];
     const paymentMethod = document.getElementById('paymentMethod').value;
-    const txnId = document.getElementById('paymentTxnId').value.trim();
+    const txnId = (document.getElementById('paymentTxnId').value.trim()) || ('PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9));
 
-    const bill = state.bills.find(b => b.id === billId);
-    if (!bill) {
-      showToast('Bill not found!', 'error');
+    if (amount <= 0) {
+      showToast('Payment amount must be greater than zero!', 'error');
       btn.disabled = false;
-      btn.textContent = 'Confirm Payment';
+      btn.textContent = 'Confirm Payment Received';
       return;
     }
 
-    const newPaid = Number(bill.paidAmount || 0) + amount;
-    const newRemaining = Math.max(0, Number(bill.totalAmount || 0) - newPaid);
-    const newStatus = newRemaining === 0 ? 'paid' : 'partial';
+    // Identify target tenant
+    let tenant = null;
+    let targetPropertyId = state.activeProperty ? state.activeProperty.id : '';
+    let targetUnitId = '';
 
+    if (selectedTarget && selectedTarget.startsWith('tenant:')) {
+      const tId = selectedTarget.replace('tenant:', '');
+      tenant = state.tenants.find(t => t.id === tId);
+    } else if (selectedTarget) {
+      const selectedBill = state.bills.find(b => b.id === selectedTarget);
+      if (selectedBill) {
+        tenant = state.tenants.find(t => t.id === selectedBill.tenantId);
+        targetPropertyId = selectedBill.propertyId || targetPropertyId;
+        targetUnitId = selectedBill.unitId || targetUnitId;
+      }
+    }
+
+    if (!tenant) {
+      showToast('Tenant not found for payment!', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Confirm Payment Received';
+      return;
+    }
+
+    targetPropertyId = tenant.propertyId || targetPropertyId;
+    targetUnitId = tenant.unitId || targetUnitId;
+    const nowIso = new Date().toISOString();
+
+    // 1. Fetch & decorate tenant's bills chronologically oldest-first
+    const tenantBills = state.bills.filter(b => b.tenantId === tenant.id);
+    const sortedBills = sortBillsChronological(tenantBills);
+    const decoratedBills = decorateWebBills(sortedBills);
+
+    // Filter outstanding bills
+    const outstandingBills = decoratedBills.filter(b => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid');
+
+    let remainingPayment = amount;
+    const allocations = [];
+
+    // 2. Sequentially allocate to oldest outstanding bills first
+    for (const b of outstandingBills) {
+      if (remainingPayment <= 0) break;
+      const isFirstTenantBill = sortedBills.length > 0 && b.id === sortedBills[0].id;
+      const capacity = isFirstTenantBill ? Number(b.totalAmount || b.subtotal) : Number(b.subtotal);
+      const needed = Math.max(0, capacity - (Number(b.paidAmount) || 0));
+      if (needed <= 0) continue;
+
+      const allocatedAmount = Math.min(remainingPayment, needed);
+      const currentPaid = Number(b.paidAmount) || 0;
+      const newPaidAmount = currentPaid + allocatedAmount;
+
+      b.paidAmount = newPaidAmount;
+
+      allocations.push({
+        transactionId: txnId,
+        billId: b.id,
+        billNumber: b.billNumber,
+        billingMonth: b.billingMonth,
+        amount: allocatedAmount,
+        type: 'bill_due',
+        allocatedAt: nowIso
+      });
+
+      remainingPayment -= allocatedAmount;
+    }
+
+    // 3. Excess payment into advance rent
+    if (remainingPayment > 0) {
+      const currentAdvance = Number(tenant.advance || tenant.advanceAmount || 0);
+      const newAdvance = currentAdvance + remainingPayment;
+      tenant.advance = newAdvance;
+      tenant.advanceAmount = newAdvance;
+
+      allocations.push({
+        transactionId: txnId,
+        billId: 'advance',
+        amount: remainingPayment,
+        type: 'advance',
+        allocatedAt: nowIso
+      });
+    }
+
+    // 4. Create Master Payment Transaction Record
+    const parentPaymentId = txnId;
     const paymentRecord = {
       id: 'pay_' + Date.now(),
       ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
-      billId: bill.id,
-      tenantId: bill.tenantId,
-      amount,
-      paymentDate,
-      paymentMethod,
+      billId: allocations.length === 1 ? allocations[0].billId : (allocations.length > 1 ? 'multiple' : (selectedTarget || 'direct')),
+      tenantId: tenant.id,
+      tenantAuthUid: tenant.tenantAuthUid || null,
+      propertyId: targetPropertyId,
+      unitId: targetUnitId,
+      amount: amount,
+      amountPaid: amount,
+      paymentDate: paymentDate,
+      paymentMethod: paymentMethod,
       transactionId: txnId,
-      createdAt: new Date().toISOString()
+      status: 'approved',
+      verifiedAt: nowIso,
+      parentPaymentId,
+      allocations: allocations,
+      isSplitChild: false,
+      createdAt: nowIso
     };
 
+    // 5. Re-decorate all tenant bills to recompute exact figures
+    const redecorated = decorateWebBills(sortedBills);
+
+    // 6. Firestore Real-Time Persistence
     if (state.currentUser && isFirebaseReady && fbDb) {
       try {
-        await fbDb.collection('payments').add(paymentRecord);
-        await fbDb.collection('bills').doc(bill.id).update({
-          paidAmount: newPaid,
-          remainingAmount: newRemaining,
-          paymentStatus: newStatus,
-          updatedAt: new Date().toISOString()
-        });
+        const addedDoc = await fbDb.collection('payments').add(paymentRecord);
+        paymentRecord.id = addedDoc.id;
+
+        for (const b of redecorated) {
+          await fbDb.collection('bills').doc(b.id).update({
+            paidAmount: b.paidAmount,
+            remainingAmount: b.remainingAmount,
+            paymentStatus: b.paymentStatus,
+            previousDuePaid: b.previousDuePaid,
+            previousDueRemaining: b.previousDueRemaining,
+            currentBillPaid: b.currentBillPaid,
+            currentBillRemaining: b.currentBillRemaining,
+            totalPaymentAllocated: b.totalPaymentAllocated,
+            updatedAt: nowIso
+          });
+        }
+
+        if (remainingPayment > 0) {
+          await fbDb.collection('tenants').doc(tenant.id).update({
+            advanceAmount: tenant.advanceAmount,
+            updatedAt: nowIso
+          });
+        }
       } catch (err) {
+        console.error('Failed to sync payment to Firestore:', err);
         showToast(`Failed to record payment: ${err.message}`, 'error');
         btn.disabled = false;
-        btn.textContent = 'Confirm Payment';
+        btn.textContent = 'Confirm Payment Received';
         return;
       }
-    } else {
-      state.payments.unshift(paymentRecord);
-      bill.paidAmount = newPaid;
-      bill.remainingAmount = newRemaining;
-      bill.paymentStatus = newStatus;
+    }
+
+    // Update in-memory state
+    state.payments.unshift(paymentRecord);
+    for (const b of redecorated) {
+      const idx = state.bills.findIndex(item => item.id === b.id);
+      if (idx !== -1) {
+        state.bills[idx] = { ...state.bills[idx], ...b };
+      }
     }
 
     btn.disabled = false;
-    btn.textContent = 'Confirm Payment';
+    btn.textContent = 'Confirm Payment Received';
     closeModal('modalRecordPayment');
-    renderBillsTab();
-    showToast(`Payment of ₹${amount.toLocaleString('en-IN')} recorded successfully!`, 'success');
+    renderAllPortalData();
+    showToast(`Payment of ₹${amount.toLocaleString('en-IN')} received and adjusted oldest-first!`, 'success');
   };
 
   window.deleteBill = async function (billId) {

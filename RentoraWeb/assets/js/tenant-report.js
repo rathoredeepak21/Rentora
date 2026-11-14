@@ -40,6 +40,20 @@
     };
     return map[(method || '').toLowerCase()] || method || '—';
   }
+  function getSettlementStatusLabel(settlement) {
+    if (!settlement) return '—';
+    const status = settlement.paymentStatus || '';
+    if (status === 'refund_pending') return 'REFUND PENDING';
+    if (status === 'partially_refunded') return 'PARTIALLY REFUNDED';
+    if (status === 'payment_pending') return 'PAYMENT PENDING';
+    if (status === 'partially_paid') return 'PARTIALLY PAID';
+    if (status === 'fully_settled') return 'FULLY SETTLED';
+
+    const net = Number(settlement.netSettlementAmount != null ? settlement.netSettlementAmount : settlement.finalAmount != null ? settlement.finalAmount : settlement.netAmount) || 0;
+    if (settlement.settlementDirection === 'refund_to_tenant' || net < 0) return 'REFUND PENDING';
+    if (settlement.settlementDirection === 'payment_by_tenant' || net > 0) return 'PAYMENT PENDING';
+    return 'FULLY SETTLED';
+  }
   function paymentStatusLabel(bill) {
     if (bill.paymentStatus === 'paid') return 'PAID';
     if (bill.paymentStatus === 'partial') return 'PARTIALLY PAID';
@@ -356,18 +370,24 @@
       [],
       ['SETTLEMENT'],
       ['Settlement Number', settlement.settlementNumber],
-      ['Settlement Date', fmtDateTime(settlement.createdAt)],
-      ['Period End', fmtDate(settlement.periodEnd)],
-      ['Extra Days', settlement.extraDays ?? 0],
-      ['Extra Stay Rent', Number(settlement.extraStayRent) || 0],
-      ['Electricity Units (Final)', settlement.elecUnits ?? 0],
-      ['Electricity Rate', Number(settlement.elecRate) || 0],
-      ['Final Electricity Charge', Number(settlement.elecCharge) || 0],
-      ['Total Charges', Number(settlement.totalCharges) || 0],
-      ['Advance Adjusted', Number(settlement.advanceAdjusted) || 0],
-      ['Deposit Deducted', Number(settlement.depositDeducted) || 0],
-      ['Net Amount', Number(settlement.netAmount) || 0],
-      ['Settlement Status', Number(settlement.netAmount) <= 0 ? 'Refundable to Tenant' : 'Payable by Tenant'],
+      ['Settlement Date', fmtDateTime(settlement.createdAt || settlement.settlementDate)],
+      ['Period End', fmtDate(settlement.periodEnd || settlement.normalPeriodEndDate)],
+      ['Move-Out Date', fmtDate(settlement.moveOutDate)],
+      ['Extra Days', settlement.extraDays ?? settlement.eligibleExtraDays ?? 0],
+      ['Extra Stay Rent', Number(settlement.extraStayRent != null ? settlement.extraStayRent : settlement.extraStayAmount) || 0],
+      ['Electricity Units (Final)', settlement.elecUnits ?? settlement.electricityUnits ?? 0],
+      ['Electricity Rate', Number(settlement.elecRate != null ? settlement.elecRate : settlement.electricityRate) || 0],
+      ['Final Electricity Charge', Number(settlement.elecCharge != null ? settlement.elecCharge : settlement.electricityCharge) || 0],
+      ['Previous Outstanding Dues', Number(settlement.outstandingBillsBalance) || 0],
+      ['Other Charges / Deductions', Number(settlement.otherCharges) || 0],
+      ['Total Final Charges', Number(settlement.totalCharges) || 0],
+      ['Advance Rent Adjusted', Number(settlement.advanceAdjusted != null ? settlement.advanceAdjusted : settlement.advanceRentAdjusted) || 0],
+      ['Security Deposit Deducted', Number(settlement.depositDeducted != null ? settlement.depositDeducted : settlement.securityDepositAdjusted) || 0],
+      ['Net Settlement Amount', Math.abs(Number(settlement.netSettlementAmount != null ? settlement.netSettlementAmount : settlement.finalAmount != null ? settlement.finalAmount : settlement.netAmount) || 0)],
+      ['Payment Direction', settlement.settlementDirection === 'payment_by_tenant' ? 'Payment Payable by Tenant' : settlement.settlementDirection === 'zero_balance' ? 'Fully Settled (Zero Balance)' : 'Refund Payable to Tenant'],
+      ['Settlement Payment Status', getSettlementStatusLabel(settlement)],
+      ['Amount Settled', Number(settlement.amountSettled) || 0],
+      ['Remaining Pending Balance', Number(settlement.amountPending != null ? settlement.amountPending : (Math.abs(Number(settlement.netSettlementAmount != null ? settlement.netSettlementAmount : settlement.finalAmount != null ? settlement.finalAmount : settlement.netAmount) || 0) - (Number(settlement.amountSettled) || 0)))],
       [],
       ['FINANCIAL SUMMARY'],
       ['Total Bills Raised', fin.billCount],
@@ -438,8 +458,16 @@
 
     // ── Sheet 3: Payment History ────────────────────────────────────────────
     const s3header = [
-      'Txn #', 'Payment Date', 'Payment Time', 'Amount', 'Payment Mode',
-      'Transaction / Ref ID', 'Associated Bill #', 'Bill Number', 'Notes'
+      'Txn #',
+      'Payment Date',
+      'Time (Recorded)',
+      'Payment Amount (₹)',
+      'Payment Mode',
+      'Transaction / Ref ID',
+      'Payment Received Details',
+      'Verification Status',
+      'Received For Bill(s) & Month(s)',
+      'Notes'
     ];
     const s3rows = [s3header];
     // Map bill IDs to bill numbers for display
@@ -448,7 +476,35 @@
 
     payments.forEach((p, i) => {
       const dateStr = p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
-      const timeStr = p.createdAt ? p.createdAt.split('T')[1]?.slice(0, 5) || '—' : '—';
+      const timeStr = p.createdAt ? (p.createdAt.split('T')[1]?.slice(0, 5) || '—') : '—';
+
+      let allocationSummary = '—';
+      let allocatedMonths = '—';
+
+      if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+        allocationSummary = p.allocations
+          .map((a) => {
+            if (a.type === 'advance') return `Advance (₹${Number(a.amount).toLocaleString('en-IN')})`;
+            const b = bills.find((tb) => tb.id === a.billId);
+            return `${b ? b.billNumber : (billNumMap[a.billId] || a.billId)} (₹${Number(a.amount).toLocaleString('en-IN')})`;
+          })
+          .join(', ');
+
+        allocatedMonths = p.allocations
+          .map((a) => {
+            if (a.type === 'advance') return `Advance (₹${Number(a.amount).toLocaleString('en-IN')})`;
+            const b = bills.find((tb) => tb.id === a.billId);
+            const m = b?.billingMonth || a.billingMonth || '';
+            const bNum = b ? b.billNumber : (a.billNumber || billNumMap[a.billId] || a.billId);
+            return m ? `${m} [${bNum}] (₹${Number(a.amount).toLocaleString('en-IN')})` : `${bNum} (₹${Number(a.amount).toLocaleString('en-IN')})`;
+          })
+          .join(', ');
+      } else {
+        const associatedBill = bills.find((b) => b.id === p.billId);
+        allocationSummary = associatedBill ? associatedBill.billNumber : (billNumMap[p.billId] || p.billId || 'Direct Payment');
+        allocatedMonths = associatedBill ? `${associatedBill.billingMonth} [${associatedBill.billNumber}]` : (p.billId === 'advance' ? 'Advance Payment' : '—');
+      }
+
       s3rows.push([
         i + 1,
         fmtDate(dateStr),
@@ -456,25 +512,26 @@
         Number(p.amount) || Number(p.amountPaid) || 0,
         paymentMethodLabel(p.paymentMethod || p.mode),
         p.transactionId || p.referenceId || '—',
-        p.billId || '—',
-        billNumMap[p.billId] || '—',
+        allocationSummary,
+        (p.status || 'approved').toUpperCase(),
+        allocatedMonths,
         p.notes || p.remarks || '—',
       ]);
     });
     // Total row
-    s3rows.push(['TOTAL', '', '', fin.totalPaid, '', '', '', '', '']);
+    s3rows.push(['TOTAL', '', '', fin.totalPaid, '', '', '', '', '', '']);
     const ws3 = XLSX.utils.aoa_to_sheet(s3rows);
-    ws3['!cols'] = [{ wch: 8 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 16 }, { wch: 20 }, { wch: 20 }];
+    ws3['!cols'] = [{ wch: 8 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 32 }, { wch: 20 }];
     XLSX.utils.book_append_sheet(wb, ws3, 'Payment History');
 
     // ── Sheet 4: Outstanding & Final Settlement ─────────────────────────────
     const s4rows = [
-      ['OUTSTANDING BILLS'],
-      ['Bill #', 'Bill Number', 'Billing Month', 'Total Amount', 'Paid Amount', 'Outstanding', 'Status'],
+      ['A. OUTSTANDING BILLS RECORD'],
+      ['Bill #', 'Bill Number', 'Billing Month', 'Total Amount (₹)', 'Paid Amount (₹)', 'Remaining Dues (₹)', 'Status'],
     ];
     const outstandingBills = bills.filter(b => paymentStatusLabel(b) !== 'PAID');
     if (outstandingBills.length === 0) {
-      s4rows.push(['—', 'No outstanding bills', '', '', '', '', '']);
+      s4rows.push(['—', 'All generated bills have been paid in full', '', 0, 0, 0, 'CLEARED']);
     } else {
       outstandingBills.forEach((b, i) => {
         s4rows.push([
@@ -483,36 +540,71 @@
           Number(b.remainingAmount) || 0, paymentStatusLabel(b)
         ]);
       });
-      s4rows.push(['TOTAL', '', '', '', '', fin.totalOutstanding, '']);
+      s4rows.push(['SUBTOTAL', '', '', '', '', fin.totalOutstanding, '']);
     }
     s4rows.push([]);
-    s4rows.push(['FINAL SETTLEMENT DETAILS']);
-    s4rows.push(['Settlement Number', settlement.settlementNumber]);
-    s4rows.push(['Generated On', fmtDateTime(settlement.createdAt)]);
-    s4rows.push(['Period End Date', fmtDate(settlement.periodEnd)]);
-    s4rows.push(['Move-Out Date', fmtDate(settlement.moveOutDate)]);
-    s4rows.push(['Policy Applied', settlement.policy || '—']);
+    s4rows.push(['B. FINAL SETTLEMENT BREAKDOWN']);
+    s4rows.push(['Settlement Document Number', settlement.settlementNumber]);
+    s4rows.push(['Settlement Date & Time', fmtDateTime(settlement.createdAt || settlement.settlementDate)]);
+    s4rows.push(['Billing Cycle End Date', fmtDate(settlement.periodEnd || settlement.normalPeriodEndDate)]);
+    s4rows.push(['Actual Move-Out Date', fmtDate(settlement.moveOutDate)]);
+    s4rows.push(['Extra Stay Policy', settlement.policy || settlement.extraStayPolicy || '—']);
     s4rows.push([]);
-    s4rows.push(['CHARGES']);
-    s4rows.push(['Extra Stay Days', settlement.extraDays ?? 0]);
-    s4rows.push(['Daily Rent Rate', Number(settlement.dailyRate) || 0]);
-    s4rows.push(['Extra Stay Rent', Number(settlement.extraStayRent) || 0]);
-    s4rows.push(['Final Electricity Units', settlement.elecUnits ?? 0]);
-    s4rows.push(['Electricity Rate per Unit', Number(settlement.elecRate) || 0]);
-    s4rows.push(['Final Electricity Charge', Number(settlement.elecCharge) || 0]);
-    s4rows.push(['Total Charges (A)', Number(settlement.totalCharges) || 0]);
+    s4rows.push(['FINAL CHARGES']);
+    s4rows.push(['Extra Stay Days', settlement.extraDays ?? settlement.eligibleExtraDays ?? 0]);
+    s4rows.push(['Daily Rent Rate Basis (₹/day)', Number(settlement.dailyRate != null ? settlement.dailyRate : settlement.dailyRateBasis) || 0]);
+    s4rows.push(['Extra Stay Rent (₹)', Number(settlement.extraStayRent != null ? settlement.extraStayRent : settlement.extraStayAmount) || 0]);
+    s4rows.push(['Final Electricity Units', settlement.elecUnits ?? settlement.electricityUnits ?? 0]);
+    s4rows.push(['Final Electricity Rate (₹/unit)', Number(settlement.elecRate != null ? settlement.elecRate : settlement.electricityRate) || 0]);
+    s4rows.push(['Final Electricity Charge (₹)', Number(settlement.elecCharge != null ? settlement.elecCharge : settlement.electricityCharge) || 0]);
+    s4rows.push(['Previous Outstanding Bills Balance (at move-out) (₹)', Number(settlement.outstandingBillsBalance) || 0]);
+    s4rows.push(['Other Charges / Deductions (₹)', Number(settlement.otherCharges) || 0]);
+    if (settlement.otherChargesNotes) {
+      s4rows.push(['Other Charges Notes', settlement.otherChargesNotes]);
+    }
+    s4rows.push(['TOTAL FINAL CHARGES (A) (₹)', Number(settlement.totalCharges) || 0]);
     s4rows.push([]);
-    s4rows.push(['DEDUCTIONS']);
-    s4rows.push(['Advance Rent Adjusted', Number(settlement.advanceAdjusted) || 0]);
-    s4rows.push(['Security Deposit Deducted', Number(settlement.depositDeducted) || 0]);
-    s4rows.push(['Total Deductions (B)', (Number(settlement.advanceAdjusted) || 0) + (Number(settlement.depositDeducted) || 0)]);
+    s4rows.push(['AVAILABLE FUNDS & DEDUCTIONS']);
+    s4rows.push(['Security Deposit (Total) (₹)', Number(settlement.deposit != null ? settlement.deposit : settlement.securityDepositOriginal) || 0]);
+    s4rows.push(['Refundable Advance Rent (Total) (₹)', Number(settlement.advance != null ? settlement.advance : settlement.advanceRentOriginal) || 0]);
+    s4rows.push(['Advance Rent Adjusted (₹)', Number(settlement.advanceAdjusted != null ? settlement.advanceAdjusted : settlement.advanceRentAdjusted) || 0]);
+    s4rows.push(['Security Deposit Deducted (₹)', Number(settlement.depositDeducted != null ? settlement.depositDeducted : settlement.securityDepositAdjusted) || 0]);
+    s4rows.push(['TOTAL DEDUCTIONS APPLIED (B) (₹)', (Number(settlement.advanceAdjusted != null ? settlement.advanceAdjusted : settlement.advanceRentAdjusted) || 0) + (Number(settlement.depositDeducted != null ? settlement.depositDeducted : settlement.securityDepositAdjusted) || 0)]);
     s4rows.push([]);
-    const netAmt = Number(settlement.netAmount) || 0;
-    s4rows.push(['NET AMOUNT (A - B)', netAmt]);
-    s4rows.push([netAmt < 0 ? 'STATUS: REFUNDABLE TO TENANT' : netAmt > 0 ? 'STATUS: PAYABLE BY TENANT' : 'STATUS: FULLY SETTLED (ZERO BALANCE)', Math.abs(netAmt)]);
+
+    const netAmtVal = Math.abs(Number(settlement.netSettlementAmount != null ? settlement.netSettlementAmount : settlement.finalAmount != null ? settlement.finalAmount : settlement.netAmount) || 0);
+    const dirVal = settlement.settlementDirection === 'payment_by_tenant' ? 'Payment Payable by Tenant' : settlement.settlementDirection === 'zero_balance' ? 'Fully Settled (Zero Balance)' : 'Refund Payable to Tenant';
+    const stLabel = getSettlementStatusLabel(settlement);
+    const amtSettled = Number(settlement.amountSettled) || 0;
+    const amtPending = Number(settlement.amountPending != null ? settlement.amountPending : Math.max(0, netAmtVal - amtSettled));
+
+    s4rows.push(['C. FINAL SETTLEMENT SUMMARY']);
+    s4rows.push(['Net Settlement Amount (₹)', netAmtVal]);
+    s4rows.push(['Payment Direction', dirVal]);
+    s4rows.push(['Settlement Payment Status', stLabel]);
+    s4rows.push(['Total Settled (Refunded / Paid) (₹)', amtSettled]);
+    s4rows.push(['Remaining Balance Pending (₹)', amtPending]);
+
+    // Settlement transactions if any
+    if (Array.isArray(settlement.transactions) && settlement.transactions.length > 0) {
+      s4rows.push([]);
+      s4rows.push(['D. SETTLEMENT TRANSACTION HISTORY']);
+      s4rows.push(['Txn #', 'Date & Time', 'Transaction Type', 'Amount (₹)', 'Payment Method', 'Reference / Txn ID', 'Notes']);
+      settlement.transactions.forEach((tx, idx) => {
+        s4rows.push([
+          idx + 1,
+          fmtDateTime(tx.date || tx.createdAt),
+          tx.type === 'refund' ? 'Refund Paid to Tenant' : 'Payment Received from Tenant',
+          Number(tx.amount) || 0,
+          paymentMethodLabel(tx.paymentMethod),
+          tx.referenceId || '—',
+          tx.notes || '—'
+        ]);
+      });
+    }
 
     const ws4 = XLSX.utils.aoa_to_sheet(s4rows);
-    ws4['!cols'] = [{ wch: 36 }, { wch: 24 }];
+    ws4['!cols'] = [{ wch: 44 }, { wch: 40 }];
     XLSX.utils.book_append_sheet(wb, ws4, 'Outstanding & Settlement');
 
     // Download
@@ -599,17 +691,66 @@
     payments.forEach((p, i) => {
       const dateStr = p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
       const timeStr = p.createdAt ? (p.createdAt.split('T')[1]?.slice(0, 5) || '—') : '—';
-      const billNum = bills.find(b => b.id === p.billId)?.billNumber || p.billId || '—';
+      
+      let allocationSummary = '—';
+      if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+        allocationSummary = p.allocations
+          .map((a) => {
+            if (a.type === 'advance') return `Advance (${fmt(a.amount)})`;
+            const b = bills.find((tb) => tb.id === a.billId);
+            const bNum = b ? b.billNumber : (a.billNumber || a.billId);
+            const m = b?.billingMonth || a.billingMonth || '';
+            return `${m ? m + ' ' : ''}${bNum} (${fmt(a.amount)})`;
+          })
+          .join(', ');
+      } else {
+        const associatedBill = bills.find(b => b.id === p.billId);
+        allocationSummary = associatedBill ? `${associatedBill.billingMonth || ''} ${associatedBill.billNumber}` : (p.billId === 'advance' ? 'Advance Payment' : p.billId || 'Direct Payment');
+      }
+
       paymentsTableRows += `<tr>
         <td>${i + 1}</td>
         <td>${fmtDate(dateStr)}</td>
         <td>${timeStr}</td>
         <td style="font-weight:700;">${fmt(Number(p.amount) || Number(p.amountPaid) || 0)}</td>
         <td>${paymentMethodLabel(p.paymentMethod || p.mode)}</td>
-        <td style="font-family:monospace;">${p.transactionId || p.referenceId || '—'}</td>
-        <td>${billNum}</td>
+        <td style="font-family:monospace;font-size:8px;">${p.transactionId || p.referenceId || '—'}</td>
+        <td>${allocationSummary}</td>
       </tr>`;
     });
+
+    const totalDeposit = Number(settlement.deposit != null ? settlement.deposit : settlement.securityDepositOriginal) || 0;
+    const totalAdvance = Number(settlement.advance != null ? settlement.advance : settlement.advanceRentOriginal) || 0;
+    const totalCharges = Number(settlement.totalCharges) || 0;
+    const netSettlement = Math.abs(Number(settlement.netSettlementAmount != null ? settlement.netSettlementAmount : settlement.finalAmount != null ? settlement.finalAmount : settlement.netAmount) || 0);
+    const statusLabel = getSettlementStatusLabel(settlement);
+    const direction = settlement.settlementDirection || (Number(settlement.netAmount) <= 0 ? 'refund_to_tenant' : 'payment_by_tenant');
+    const directionText = direction === 'payment_by_tenant' ? 'PAYMENT PAYABLE BY TENANT' : direction === 'zero_balance' ? 'FULLY SETTLED' : 'REFUND PAYABLE TO TENANT';
+    const directionMsg = direction === 'payment_by_tenant' ? 'The tenant must pay this amount to the landlord.' : direction === 'zero_balance' ? 'No amount is payable by either party.' : 'The landlord must refund this amount to the tenant.';
+    const amtSettled = Number(settlement.amountSettled) || 0;
+    const amtPending = Number(settlement.amountPending != null ? settlement.amountPending : Math.max(0, netSettlement - amtSettled));
+
+    let txTableHtml = '';
+    if (Array.isArray(settlement.transactions) && settlement.transactions.length > 0) {
+      let txRows = '';
+      settlement.transactions.forEach((tx, idx) => {
+        txRows += `<tr>
+          <td>${idx + 1}</td>
+          <td>${fmtDateTime(tx.date || tx.createdAt)}</td>
+          <td><strong style="color:${tx.type === 'refund' ? '#059669' : '#2563eb'}">${tx.type === 'refund' ? 'Refund Paid' : 'Payment Received'}</strong></td>
+          <td style="font-weight:700;">${fmt(tx.amount)}</td>
+          <td>${paymentMethodLabel(tx.paymentMethod)}</td>
+          <td style="font-family:monospace;font-size:8px;">${tx.referenceId || '—'}</td>
+          <td>${tx.notes || '—'}</td>
+        </tr>`;
+      });
+      txTableHtml = `
+        <div style="font-size:10px;font-weight:800;color:#1e40af;margin:12px 0 6px;text-transform:uppercase;">Settlement Transaction History</div>
+        <table>
+          <thead><tr><th>#</th><th>Date &amp; Time</th><th>Type</th><th>Amount</th><th>Method</th><th>Reference ID</th><th>Notes</th></tr></thead>
+          <tbody>${txRows}</tbody>
+        </table>`;
+    }
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>
     <div class="page">
@@ -676,7 +817,7 @@
       <div class="section-title">3. Complete Payment Transactions (${payments.length} transaction${payments.length !== 1 ? 's' : ''})</div>
       <table>
         <thead><tr>
-          <th>#</th><th>Date</th><th>Time</th><th>Amount</th><th>Mode</th><th>Transaction ID</th><th>Bill No.</th>
+          <th>#</th><th>Date</th><th>Time</th><th>Amount</th><th>Mode</th><th>Transaction ID</th><th>Payment Received Details</th>
         </tr></thead>
         <tbody>${paymentsTableRows}</tbody>
         <tfoot><tr class="total-row">
@@ -688,34 +829,56 @@
 
       <!-- Section 4: Final Settlement -->
       <div class="section-title">4. Outstanding &amp; Final Settlement</div>
+
+      <!-- Prominent FINAL SETTLEMENT SUMMARY box -->
+      <div style="background:#f8fafc;border:2px solid #3b82f6;border-radius:8px;padding:12px 16px;margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:800;color:#1e40af;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">
+          FINAL SETTLEMENT SUMMARY
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px;margin-bottom:10px;">
+          <div class="info-item"><label>Total Security Deposit</label><span>${fmt(totalDeposit)}</span></div>
+          <div class="info-item"><label>Refundable Advance Rent</label><span>${fmt(totalAdvance)}</span></div>
+          <div class="info-item"><label>Total Final Charges</label><span>${fmt(totalCharges)}</span></div>
+          <div class="info-item"><label>Net Amount</label><span style="font-weight:800;">${fmt(netSettlement)}</span></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid #cbd5e1;padding:8px 12px;border-radius:6px;">
+          <div>
+            <div style="font-size:8px;text-transform:uppercase;color:#64748b;font-weight:700;">Direction</div>
+            <div style="font-size:12px;font-weight:800;color:${direction === 'payment_by_tenant' ? '#dc2626' : '#059669'};">${directionText} • ${fmt(netSettlement)}</div>
+            <div style="font-size:8.5px;color:#475569;margin-top:2px;">${directionMsg}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:8px;text-transform:uppercase;color:#64748b;font-weight:700;">Payment Status</div>
+            <div style="font-size:11px;font-weight:800;color:#1e293b;">${statusLabel}</div>
+            <div style="font-size:8.5px;color:#64748b;margin-top:2px;">Settled: ${fmt(amtSettled)} &nbsp;|&nbsp; Pending: <strong style="color:${amtPending > 0 ? '#dc2626' : '#059669'}">${fmt(amtPending)}</strong></div>
+          </div>
+        </div>
+      </div>
+
       <div class="settlement-box">
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px 24px;">
           <div class="info-item"><label>Settlement Number</label><span>${settlement.settlementNumber}</span></div>
-          <div class="info-item"><label>Generated On</label><span>${fmtDateTime(settlement.createdAt)}</span></div>
-          <div class="info-item"><label>Period End</label><span>${fmtDate(settlement.periodEnd)}</span></div>
+          <div class="info-item"><label>Generated On</label><span>${fmtDateTime(settlement.createdAt || settlement.settlementDate)}</span></div>
+          <div class="info-item"><label>Period End</label><span>${fmtDate(settlement.periodEnd || settlement.normalPeriodEndDate)}</span></div>
           <div class="info-item"><label>Move-Out Date</label><span>${fmtDate(settlement.moveOutDate)}</span></div>
-          <div class="info-item"><label>Policy</label><span>${settlement.policy || '—'}</span></div>
-          <div class="info-item"><label>Extra Days</label><span>${settlement.extraDays ?? 0}</span></div>
-          <div class="info-item"><label>Daily Rate</label><span>${fmt(settlement.dailyRate)}</span></div>
-          <div class="info-item"><label>Extra Stay Rent</label><span>${fmt(settlement.extraStayRent)}</span></div>
-          <div class="info-item"><label>Final Elec Units</label><span>${settlement.elecUnits ?? 0} units @ ${fmt(settlement.elecRate)}/unit</span></div>
-          <div class="info-item"><label>Final Elec Charge</label><span>${fmt(settlement.elecCharge)}</span></div>
+          <div class="info-item"><label>Policy</label><span>${settlement.policy || settlement.extraStayPolicy || '—'}</span></div>
+          <div class="info-item"><label>Extra Days</label><span>${settlement.extraDays ?? settlement.eligibleExtraDays ?? 0}</span></div>
+          <div class="info-item"><label>Daily Rate</label><span>${fmt(settlement.dailyRate != null ? settlement.dailyRate : settlement.dailyRateBasis)}</span></div>
+          <div class="info-item"><label>Extra Stay Rent</label><span>${fmt(settlement.extraStayRent != null ? settlement.extraStayRent : settlement.extraStayAmount)}</span></div>
+          <div class="info-item"><label>Final Elec Units</label><span>${settlement.elecUnits ?? settlement.electricityUnits ?? 0} units @ ${fmt(settlement.elecRate != null ? settlement.elecRate : settlement.electricityRate)}/unit</span></div>
+          <div class="info-item"><label>Final Elec Charge</label><span>${fmt(settlement.elecCharge != null ? settlement.elecCharge : settlement.electricityCharge)}</span></div>
+          <div class="info-item"><label>Previous Outstanding Dues</label><span>${fmt(settlement.outstandingBillsBalance)}</span></div>
+          <div class="info-item"><label>Other Charges</label><span>${fmt(settlement.otherCharges)} ${settlement.otherChargesNotes ? '(' + settlement.otherChargesNotes + ')' : ''}</span></div>
           <div class="info-item"><label>Total Charges (A)</label><span style="font-weight:800;">${fmt(settlement.totalCharges)}</span></div>
         </div>
         <div style="border-top:1px solid #86efac;margin:10px 0;"></div>
         <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px 24px;">
-          <div class="info-item"><label>Advance Adjusted (B1)</label><span>${fmt(settlement.advanceAdjusted)}</span></div>
-          <div class="info-item"><label>Deposit Deducted (B2)</label><span>${fmt(settlement.depositDeducted)}</span></div>
+          <div class="info-item"><label>Advance Adjusted (B1)</label><span>${fmt(settlement.advanceAdjusted != null ? settlement.advanceAdjusted : settlement.advanceRentAdjusted)}</span></div>
+          <div class="info-item"><label>Deposit Deducted (B2)</label><span>${fmt(settlement.depositDeducted != null ? settlement.depositDeducted : settlement.securityDepositAdjusted)}</span></div>
         </div>
-        <div style="border-top:1px solid #86efac;margin:10px 0;"></div>
-        <div style="font-size:13px;font-weight:800;">
-          Net Amount (A − B1 − B2):
-          <span class="${netAmt > 0 ? 'net-positive' : 'net-negative'}">
-            ${netAmt < 0 ? '(REFUND) ' : '(PAYABLE) '}${fmt(Math.abs(netAmt))}
-          </span>
-        </div>
-        ${netAmt < 0 ? '<div style="font-size:9px;color:#065f46;margin-top:4px;">← Landlord refunds this amount to tenant</div>' : netAmt > 0 ? '<div style="font-size:9px;color:#991b1b;margin-top:4px;">← Tenant pays this amount to landlord</div>' : '<div style="font-size:9px;color:#065f46;margin-top:4px;">✓ Fully settled — zero balance</div>'}
       </div>
+
+      ${txTableHtml}
 
       <!-- Footer -->
       <div style="margin-top:20px;border-top:1px solid #e5e7eb;padding-top:10px;font-size:8.5px;color:#9ca3af;text-align:center;">

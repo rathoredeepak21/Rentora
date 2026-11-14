@@ -1172,6 +1172,13 @@
                   <input type="url" id="settingsLogoUrl" class="form-control" placeholder="https://... image link for invoice header">
                 </div>
               </div>
+
+              <div class="input-row">
+                <div class="form-group">
+                  <label class="form-label" for="settingsSignatureUrl">Digital Signature URL (Optional)</label>
+                  <input type="url" id="settingsSignatureUrl" class="form-control" placeholder="https://... image link for authorized signatory">
+                </div>
+              </div>
             </div>
 
             <!-- Footer Save Actions -->
@@ -1852,11 +1859,11 @@
 
           <div class="input-row">
             <div class="form-group">
-              <label class="form-label" for="paymentAmount">Amount Paid (₹) *</label>
+              <label class="form-label" for="paymentAmount">Amount Received (₹) *</label>
               <input type="number" id="paymentAmount" class="form-control" min="1" required>
             </div>
             <div class="form-group">
-              <label class="form-label" for="paymentDate">Payment Date *</label>
+              <label class="form-label" for="paymentDate">Payment Received Date *</label>
               <input type="date" id="paymentDate" class="form-control" required>
             </div>
           </div>
@@ -1878,7 +1885,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalRecordPayment')">Cancel</button>
-          <button type="submit" id="recordPaymentSubmitBtn" class="btn btn-emerald btn-sm">Confirm Payment</button>
+          <button type="submit" id="recordPaymentSubmitBtn" class="btn btn-emerald btn-sm">Confirm Payment Received</button>
         </div>
       </form>
     </div>
@@ -2208,14 +2215,31 @@
               <input type="number" id="vacateElecRate" class="form-control" value="10" min="1" oninput="calculateModalSettlement()">
             </div>
             <div class="form-group">
-              <label class="form-label" for="vacateAdvanceAdj">Advance Adjusted (₹)</label>
-              <input type="number" id="vacateAdvanceAdj" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+              <label class="form-label" for="vacateOutstandingBills">Previous Outstanding Bills & Arrears (₹)</label>
+              <input type="number" id="vacateOutstandingBills" class="form-control" value="0" min="0" readonly style="background: var(--bg-surface-elevated); cursor: not-allowed;">
             </div>
           </div>
 
-          <div class="form-group">
-            <label class="form-label" for="vacateDepositAdj">Security Deposit to Refund/Deduct (₹)</label>
-            <input type="number" id="vacateDepositAdj" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="vacateOtherCharges">Other Charges / Deductions (₹)</label>
+              <input type="number" id="vacateOtherCharges" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="vacateOtherChargesNotes">Reason / Notes for Other Charges</label>
+              <input type="text" id="vacateOtherChargesNotes" class="form-control" placeholder="e.g. Painting, repairs, deep cleaning">
+            </div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="vacateDepositAdj">Total Security Deposit Held (₹)</label>
+              <input type="number" id="vacateDepositAdj" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="vacateAdvanceAdj">Refundable Advance Rent (₹)</label>
+              <input type="number" id="vacateAdvanceAdj" class="form-control" value="0" min="0" oninput="calculateModalSettlement()">
+            </div>
           </div>
 
           <!-- Live Breakdown Card in Modal -->
@@ -2234,14 +2258,32 @@
                 <span>Electricity Charge:</span>
                 <span id="modalElecChargeText">₹0.00</span>
               </div>
-              <div style="display: flex; justify-content: space-between; color: var(--secondary);">
-                <span>Less Deductions (Deposit + Advance):</span>
-                <span id="modalDeductionsText">-₹0.00</span>
+              <div style="display: flex; justify-content: space-between;">
+                <span>Previous Outstanding Bills:</span>
+                <span id="modalOutstandingBillsText">₹0.00</span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span>Other Charges:</span>
+                <span id="modalOtherChargesText">₹0.00</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-weight: 700; color: #EF4444; border-top: 1px dashed var(--border-subtle); padding-top: 4px;">
+                <span>Total Final Charges:</span>
+                <span id="modalTotalChargesText">₹0.00</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; color: #10B981; font-weight: 600;">
+                <span>Available Funds (Deposit + Advance):</span>
+                <span id="modalAvailableFundsText">₹0.00</span>
               </div>
               <div style="height: 1px; background: var(--border-subtle); margin: 4px 0;"></div>
-              <div style="display: flex; justify-content: space-between; font-weight: 800; font-size: 1.05rem;">
-                <span id="modalNetBalanceLabel">NET BALANCE:</span>
-                <span id="modalNetBalanceAmount" style="color: var(--secondary);">₹0.00</span>
+              
+              <!-- Direction and Status Banner -->
+              <div id="modalSettlementBanner" style="padding: 12px; border-radius: 6px; text-align: center; border: 1.5px solid var(--border-subtle);">
+                <div style="font-size: 0.8rem; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;" id="modalNetBalanceLabel">NET BALANCE:</div>
+                <div style="font-size: 1.45rem; font-weight: 800; margin: 2px 0;" id="modalNetBalanceAmount">₹0.00</div>
+                <div style="font-size: 0.82rem; margin-top: 2px; font-weight: 600;" id="modalPartyMessageText">No amount is payable by either party.</div>
+                <div style="margin-top: 6px;">
+                  <span class="unit-badge badge-fully-settled" id="modalPaymentStatusBadge">FULLY SETTLED</span>
+                </div>
               </div>
             </div>
           </div>
@@ -2255,19 +2297,30 @@
     </div>
   </div>
 
-  <!-- 9. SETTLEMENT INVOICE POPUP / PRINT MODAL -->
+  <!-- 9. FINAL SETTLEMENT STATEMENT & DETAILS MODAL -->
   <div id="modalSettlementInvoice" class="modal-backdrop">
-    <div class="modal-container large">
+    <div class="modal-container large" style="max-width: 900px;">
       <div class="modal-header">
         <div class="modal-title">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-          Move-Out Settlement Invoice
+          Final Move-Out Settlement Statement
         </div>
         <button class="modal-close-btn" onclick="closeModal('modalSettlementInvoice')">&times;</button>
       </div>
 
-      <div class="modal-body" style="padding: 16px;">
-        <div class="invoice-paper" id="printableInvoiceArea">
+      <div class="modal-body" style="padding: 20px;">
+        <!-- Top Action Bar -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-family: monospace; font-size: 1.15rem; font-weight: 800; color: var(--primary);" id="invSettlementNum">SET-2026-0001</span>
+            <span id="invStatusBadge" class="unit-badge badge-fully-settled">FULLY SETTLED</span>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;" id="invActionBtnsContainer">
+            <!-- Dynamically populated Record Refund / Record Payment buttons -->
+          </div>
+        </div>
+
+        <div class="invoice-paper" id="printableInvoiceArea" style="box-shadow: none; border: 1px solid var(--border-subtle);">
           <div class="invoice-header-row">
             <div>
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
@@ -2281,9 +2334,8 @@
             </div>
 
             <div style="text-align: right;">
-              <div style="font-size: 0.78rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 700;">Settlement ID</div>
-              <div style="font-family: monospace; font-size: 1.15rem; font-weight: 800; color: var(--primary);" id="invSettlementNum">SET-2026-0001</div>
-              <div style="font-size: 0.8rem; color: var(--text-secondary);" id="invDate">Date: 23-Oct-2026</div>
+              <div style="font-size: 0.78rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 700;">Settlement Statement</div>
+              <div style="font-size: 0.85rem; color: var(--text-secondary);" id="invDate">Date: 23-Oct-2026</div>
             </div>
           </div>
 
@@ -2302,59 +2354,114 @@
             </div>
           </div>
 
-          <div class="table-responsive-wrapper" style="border: none; background: transparent;">
-            <table class="invoice-table" style="min-width: 520px;">
-              <thead>
-                <tr>
-                  <th>Description</th>
-                  <th>Quantity / Metric</th>
-                  <th>Rate (₹)</th>
-                  <th style="text-align: right;">Amount (₹)</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>Extra Stay Rent</td>
-                  <td id="invExtraDaysMetric">0 Days</td>
-                  <td id="invDailyRateMetric">₹0.00/day</td>
-                  <td style="text-align: right; font-weight: 600;" id="invExtraRentVal">₹0.00</td>
-                </tr>
-                <tr>
-                  <td>Electricity Units Consumed</td>
-                  <td id="invElecUnitsMetric">0 Units</td>
-                  <td id="invElecRateMetric">₹10.00/unit</td>
-                  <td style="text-align: right; font-weight: 600;" id="invElecChargeVal">₹0.00</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="font-weight: 700; text-align: right;">Total Charges (A)</td>
-                  <td style="text-align: right; font-weight: 700; color: var(--primary);" id="invTotalChargesVal">₹0.00</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="color: var(--secondary);">Less: Advance Rent Adjusted</td>
-                  <td style="text-align: right; color: var(--secondary);" id="invAdvanceVal">-₹0.00</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="color: var(--secondary);">Less: Security Deposit Refunded</td>
-                  <td style="text-align: right; color: var(--secondary);" id="invDepositVal">-₹0.00</td>
-                </tr>
-                <tr style="border-top: 2px solid var(--border-subtle); background: var(--bg-surface-elevated);">
-                  <td colspan="3" style="font-weight: 800; font-size: 1.05rem;" id="invFinalLabel">FINAL NET REFUNDABLE TO TENANT:</td>
-                  <td style="text-align: right; font-weight: 800; font-size: 1.15rem; color: #10B981;" id="invNetTotalVal">₹0.00</td>
-                </tr>
-              </tbody>
-            </table>
+          <!-- PROMINENT FINAL SETTLEMENT SUMMARY BOX (MATCHES MOBILE 1:1) -->
+          <div class="settlement-summary-box" id="invSummaryBox">
+            <div style="font-weight: 800; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+              <span>FINAL SETTLEMENT SUMMARY</span>
+              <span id="invBoxStatusBadge" class="unit-badge badge-fully-settled">FULLY SETTLED</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; font-size: 0.86rem; margin-bottom: 14px;">
+              <div>
+                <div style="font-size: 0.76rem; color: var(--text-muted); text-transform: uppercase;">Total Security Deposit</div>
+                <div style="font-weight: 700; font-size: 1rem;" id="invSummaryDeposit">₹0.00</div>
+              </div>
+              <div>
+                <div style="font-size: 0.76rem; color: var(--text-muted); text-transform: uppercase;">Refundable Advance Rent</div>
+                <div style="font-weight: 700; font-size: 1rem;" id="invSummaryAdvance">₹0.00</div>
+              </div>
+              <div>
+                <div style="font-size: 0.76rem; color: var(--text-muted); text-transform: uppercase;">Total Final Charges</div>
+                <div style="font-weight: 700; font-size: 1rem; color: #EF4444;" id="invSummaryCharges">₹0.00</div>
+              </div>
+              <div>
+                <div style="font-size: 0.76rem; color: var(--text-muted); text-transform: uppercase;">Net Amount</div>
+                <div style="font-weight: 800; font-size: 1.15rem;" id="invSummaryNetAmount">₹0.00</div>
+              </div>
+            </div>
+            <div style="padding: 10px 14px; background: var(--bg-surface); border-radius: 6px; border: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+              <div>
+                <div style="font-weight: 800; font-size: 0.95rem; text-transform: uppercase;" id="invDirectionTitle">REFUND PAYABLE TO TENANT</div>
+                <div style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 2px;" id="invPartyMessage">Landlord is required to refund ₹0.00 to the tenant.</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-size: 0.76rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Remaining Balance</div>
+                <div style="font-size: 1.2rem; font-weight: 800;" id="invRemainingPending">₹0.00</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Itemized Charges Table -->
+          <div style="margin-top: 16px;">
+            <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 8px;">Final Charges Breakdown</div>
+            <div class="table-responsive-wrapper" style="border: none; background: transparent;">
+              <table class="invoice-table" style="min-width: 520px;">
+                <thead>
+                  <tr>
+                    <th>Description</th>
+                    <th>Quantity / Metric</th>
+                    <th>Rate (₹)</th>
+                    <th style="text-align: right;">Amount (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Extra Stay Rent</td>
+                    <td id="invExtraDaysMetric">0 Days</td>
+                    <td id="invDailyRateMetric">₹0.00/day</td>
+                    <td style="text-align: right; font-weight: 600;" id="invExtraRentVal">₹0.00</td>
+                  </tr>
+                  <tr>
+                    <td>Electricity Units Consumed</td>
+                    <td id="invElecUnitsMetric">0 Units</td>
+                    <td id="invElecRateMetric">₹10.00/unit</td>
+                    <td style="text-align: right; font-weight: 600;" id="invElecChargeVal">₹0.00</td>
+                  </tr>
+                  <tr id="invOutstandingRow">
+                    <td>Previous Outstanding Bills & Arrears</td>
+                    <td>Past Invoices</td>
+                    <td>-</td>
+                    <td style="text-align: right; font-weight: 600; color: #EF4444;" id="invOutstandingVal">₹0.00</td>
+                  </tr>
+                  <tr id="invOtherChargesRow">
+                    <td>Other Charges / Deductions <span id="invOtherNotes" style="font-size: 0.78rem; color: var(--text-muted);"></span></td>
+                    <td>Adjustment</td>
+                    <td>-</td>
+                    <td style="text-align: right; font-weight: 600; color: #EF4444;" id="invOtherChargesVal">₹0.00</td>
+                  </tr>
+                  <tr style="background: var(--bg-surface-elevated); font-weight: 700;">
+                    <td colspan="3" style="text-align: right;">Total Final Charges (A)</td>
+                    <td style="text-align: right; color: #EF4444;" id="invTotalChargesVal">₹0.00</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Settlement Transaction History Section -->
+          <div style="margin-top: 20px;" id="invTxHistorySection">
+            <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+              <span>Settlement Transaction History</span>
+              <span style="font-size: 0.78rem; color: var(--text-muted);" id="invTxCount">0 Transactions</span>
+            </div>
+            <div id="invTxHistoryContainer">
+              <!-- Dynamically populated transaction rows -->
+            </div>
           </div>
 
           <div style="font-size: 0.78rem; color: var(--text-muted); text-align: center; margin-top: 24px;">
-            Generated via Rentora Cloud Platform • Legally compliant Move-Out Settlement Receipt.
+            Generated via Rentora Platform • Accurate Move-Out Final Settlement Audit Record.
           </div>
         </div>
       </div>
 
       <div class="modal-footer">
+        <button class="btn btn-primary btn-sm" onclick="downloadSettlementPDF()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Download PDF
+        </button>
         <button class="btn btn-secondary btn-sm" onclick="printInvoice()">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-          Print / Save PDF
+          Print Statement
         </button>
         <button class="btn btn-emerald btn-sm" onclick="shareInvoiceWhatsApp()">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
@@ -2362,6 +2469,64 @@
         </button>
         <button class="btn btn-secondary btn-sm" onclick="closeModal('modalSettlementInvoice')">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- RECORD SETTLEMENT TRANSACTION MODAL (REFUND / PAYMENT RECEIVED) -->
+  <div id="modalRecordSettlementTx" class="modal-backdrop">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title" id="settlementTxModalTitle">
+          Record Settlement Transaction
+        </div>
+        <button class="modal-close-btn" onclick="closeModal('modalRecordSettlementTx')">&times;</button>
+      </div>
+      <form id="formRecordSettlementTx" onsubmit="handleRecordSettlementTx(event)">
+        <input type="hidden" id="settlementTxSettlementId">
+        <input type="hidden" id="settlementTxType">
+        <div class="modal-body">
+          <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-sm); margin-bottom: 16px; border-left: 4px solid var(--primary);">
+            <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Remaining Balance</div>
+            <div style="font-size: 1.35rem; font-weight: 800; color: var(--text-main);" id="settlementTxPendingText">₹0.00</div>
+            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 2px;" id="settlementTxHelperText">Amount must not exceed remaining balance.</div>
+          </div>
+
+          <div class="input-row">
+            <div class="form-group">
+              <label class="form-label" for="settlementTxAmount">Amount (₹) *</label>
+              <input type="number" id="settlementTxAmount" class="form-control" step="0.01" min="0.01" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="settlementTxDate">Transaction Date *</label>
+              <input type="date" id="settlementTxDate" class="form-control" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="settlementTxMethod">Payment Method *</label>
+            <select id="settlementTxMethod" class="form-control" required>
+              <option value="upi" selected>UPI (GPay, PhonePe, Paytm)</option>
+              <option value="cash">Cash in Hand</option>
+              <option value="bank_transfer">Bank Transfer (IMPS / NEFT)</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="settlementTxReference">Transaction / Reference ID (Optional)</label>
+            <input type="text" id="settlementTxReference" class="form-control" placeholder="e.g. UPI Ref #4392819283">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="settlementTxNotes">Notes / Remarks (Optional)</label>
+            <input type="text" id="settlementTxNotes" class="form-control" placeholder="e.g. Refund paid via GPay">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeModal('modalRecordSettlementTx')">Cancel</button>
+          <button type="submit" id="recordSettlementTxSubmitBtn" class="btn btn-emerald btn-sm">Confirm Transaction</button>
+        </div>
+      </form>
     </div>
   </div>
 
