@@ -4,6 +4,7 @@ import { Bill, Tenant, Property, Unit, BillSettings, Payment, Settlement } from 
 import { formatBillDate, formatShortBillDate, parseDateSafely } from '../utils/date';
 import { rentoraLogoBase64 } from './logoData';
 import { paymentService } from './paymentService';
+import { computeSettlementStatus } from './settlementService';
 
 // Helper function to fetch remote Cloudinary images and convert to Base64 data URLs
 const getBase64Image = async (url: string): Promise<string | null> => {
@@ -1058,21 +1059,28 @@ export const pdfService = {
       localSignatureBase64 = await getBase64Image(settings.signatureUrl);
     }
 
-    const netAmountFormatted = Math.abs(settlement.finalAmount || 0).toLocaleString('en-IN', {
+    const statusInfo = computeSettlementStatus(settlement);
+
+    const isPayable = statusInfo.direction === 'payment_by_tenant';
+    const isRefundable = statusInfo.direction === 'refund_to_tenant';
+    const isZero = statusInfo.direction === 'zero_balance';
+
+    const netStatusColor = isPayable ? '#DC2626' : isRefundable ? '#16A34A' : '#4B5563';
+    const netStatusBadge = statusInfo.directionTitle;
+    const targetAmountFormatted = statusInfo.targetTotal.toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const amountSettledFormatted = statusInfo.amountSettled.toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const amountPendingFormatted = statusInfo.amountPending.toLocaleString('en-IN', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
 
-    const isPayable = settlement.finalStatus === 'payable';
-    const isRefundable = settlement.finalStatus === 'refundable';
-    const isZero = settlement.finalStatus === 'zero_balance';
-
-    const netStatusColor = isPayable ? '#DC2626' : isRefundable ? '#16A34A' : '#4B5563';
-    const netStatusBadge = isPayable
-      ? 'AMOUNT PAYABLE BY TENANT'
-      : isRefundable
-      ? 'AMOUNT REFUNDABLE TO TENANT'
-      : 'FULLY SETTLED (ZERO BALANCE)';
+    const txs = settlement.transactions || [];
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -1349,10 +1357,105 @@ export const pdfService = {
           </tbody>
         </table>
 
-        <div class="net-box">
-          <div class="net-badge-title">${netStatusBadge}</div>
-          <div class="net-amount">₹${netAmountFormatted}</div>
+        <!-- PROMINENT FINAL SETTLEMENT SUMMARY -->
+        <div class="section-title">FINAL SETTLEMENT SUMMARY</div>
+        <div style="border: 2px solid ${netStatusColor}; border-radius: 8px; background: #ffffff; padding: 14px 16px; margin: 12px 0 20px 0; page-break-inside: avoid;">
+          <!-- Primary Direction Banner -->
+          <div style="background-color: ${netStatusColor}14; border: 1.5px solid ${netStatusColor}; border-radius: 6px; padding: 12px; text-align: center; margin-bottom: 12px;">
+            <div style="font-size: 13px; font-weight: 800; color: ${netStatusColor}; text-transform: uppercase; letter-spacing: 0.8px;">
+              ${netStatusBadge}
+            </div>
+            <div style="font-size: 28px; font-weight: 800; color: ${netStatusColor}; margin: 4px 0;">
+              ₹${targetAmountFormatted}
+            </div>
+            <div style="font-size: 11.5px; font-weight: 700; color: #1F2937; margin-top: 2px;">
+              ${statusInfo.partyMessage}
+            </div>
+          </div>
+
+          <!-- Structured Summary Points -->
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 0;">
+            <tbody>
+              <tr>
+                <td style="padding: 5px 8px; color: #4B5563; font-weight: 600; font-size: 12px; border: 1px solid #E5E7EB; width: 55%;">1. Total Security Deposit:</td>
+                <td class="text-right bold" style="padding: 5px 8px; font-size: 12px; border: 1px solid #E5E7EB;">₹${settlement.securityDepositOriginal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+              <tr>
+                <td style="padding: 5px 8px; color: #4B5563; font-weight: 600; font-size: 12px; border: 1px solid #E5E7EB;">2. Refundable Advance Rent:</td>
+                <td class="text-right bold" style="padding: 5px 8px; font-size: 12px; border: 1px solid #E5E7EB;">₹${settlement.advanceRentOriginal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+              <tr>
+                <td style="padding: 5px 8px; color: #4B5563; font-weight: 600; font-size: 12px; border: 1px solid #E5E7EB;">3. Total Final Charges:</td>
+                <td class="text-right bold" style="padding: 5px 8px; font-size: 12px; color: #DC2626; border: 1px solid #E5E7EB;">₹${settlement.totalCharges.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+              <tr style="background: #F9FAFB;">
+                <td style="padding: 6px 8px; font-weight: 800; font-size: 12.5px; color: #111827; border: 1px solid #D1D5DB;">4. Net ${isRefundable ? 'Refundable' : 'Payable'} Amount:</td>
+                <td class="text-right bold" style="padding: 6px 8px; font-size: 13px; color: ${netStatusColor}; border: 1px solid #D1D5DB;">₹${targetAmountFormatted}</td>
+              </tr>
+              <tr>
+                <td style="padding: 5px 8px; color: #4B5563; font-weight: 600; font-size: 12px; border: 1px solid #E5E7EB;">5. Payment Direction:</td>
+                <td class="text-right bold" style="padding: 5px 8px; font-size: 12px; color: #111827; border: 1px solid #E5E7EB;">
+                  ${isRefundable ? 'Refund to Tenant (Landlord → Tenant)' : isPayable ? 'Payment by Tenant (Tenant → Landlord)' : 'Zero Balance (Fully Settled)'}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 5px 8px; color: #4B5563; font-weight: 600; font-size: 12px; border: 1px solid #E5E7EB;">6. Settlement Payment Status:</td>
+                <td class="text-right" style="padding: 5px 8px; border: 1px solid #E5E7EB;">
+                  <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 800; color: ${netStatusColor}; background: ${netStatusColor}15; border: 1px solid ${netStatusColor};">
+                    ${statusInfo.statusLabel}
+                  </span>
+                </td>
+              </tr>
+              ${statusInfo.amountSettled > 0 ? `
+              <tr style="background: #F0FDF4;">
+                <td style="padding: 5px 8px; color: #16A34A; font-weight: 700; font-size: 12px; border: 1px solid #BBF7D0;">• Amount Already ${isRefundable ? 'Refunded' : 'Received'}:</td>
+                <td class="text-right bold" style="padding: 5px 8px; font-size: 12px; color: #16A34A; border: 1px solid #BBF7D0;">₹${amountSettledFormatted}</td>
+              </tr>
+              ` : ''}
+              ${!isZero ? `
+              <tr style="background: ${statusInfo.amountPending > 0 ? '#FEF2F2' : '#F0FDF4'};">
+                <td style="padding: 6px 8px; color: ${statusInfo.amountPending > 0 ? '#DC2626' : '#16A34A'}; font-weight: 800; font-size: 12.5px; border: 1px solid #E5E7EB;">• Remaining Balance Pending:</td>
+                <td class="text-right bold" style="padding: 6px 8px; font-size: 13px; color: ${statusInfo.amountPending > 0 ? '#DC2626' : '#16A34A'}; border: 1px solid #E5E7EB;">₹${amountPendingFormatted}</td>
+              </tr>
+              ` : ''}
+            </tbody>
+          </table>
         </div>
+
+        ${txs.length > 0 ? `
+        <!-- SETTLEMENT TRANSACTION HISTORY -->
+        <div class="section-title">SETTLEMENT TRANSACTION HISTORY</div>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; page-break-inside: avoid;">
+          <thead>
+            <tr>
+              <th style="width: 20%;">Date</th>
+              <th style="width: 25%;">Transaction Type</th>
+              <th style="width: 20%;">Payment Method</th>
+              <th style="width: 20%;">Reference / Notes</th>
+              <th class="text-right" style="width: 15%;">Amount (₹)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${txs.map(t => {
+              const isRef = t.type === 'refund';
+              const tColor = isRef ? '#16A34A' : '#2563EB';
+              const typeText = isRef ? 'Refund Paid' : 'Payment Received';
+              const methodText = (t.paymentMethod || 'cash').toUpperCase();
+              const dateText = t.date ? formatShortBillDate(t.date) : 'N/A';
+              const refNotes = [t.transactionReference ? `Ref: ${t.transactionReference}` : '', t.notes || ''].filter(Boolean).join(' • ') || '-';
+              return `
+                <tr>
+                  <td>${dateText}</td>
+                  <td class="bold" style="color: ${tColor};">${typeText}</td>
+                  <td>${methodText}</td>
+                  <td style="color: #4B5563; font-size: 11px;">${refNotes}</td>
+                  <td class="text-right bold" style="color: ${tColor};">₹${(Number(t.amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+        ` : ''}
 
         ${settlement.notes ? `
         <div style="background: #F3F4F6; border-radius: 6px; padding: 10px; margin-bottom: 20px;">

@@ -2,6 +2,10 @@ import db from '../utils/db';
 import { 
   Settlement, 
   SettlementAdjustment, 
+  SettlementPaymentStatus,
+  SettlementTransaction,
+  SettlementTransactionType,
+  PaymentMethod,
   ExtraStayPolicy, 
   Tenant, 
   Bill, 
@@ -14,6 +18,130 @@ import { unitService } from './unitService';
 import { tenantAuthService } from './tenantAuthService';
 
 const COLLECTION = 'settlements';
+
+/**
+ * Computes the unified settlement status, amounts, and payment direction.
+ * Works seamlessly with both newly created and historical settlements.
+ */
+export const computeSettlementStatus = (
+  settlement: Partial<Settlement>
+): {
+  targetTotal: number;
+  amountSettled: number;
+  amountPending: number;
+  status: SettlementPaymentStatus;
+  direction: 'refund_to_tenant' | 'payment_by_tenant' | 'zero_balance';
+  partyMessage: string;
+  directionTitle: string;
+  statusLabel: string;
+} => {
+  const isZero = settlement.finalStatus === 'zero_balance' || 
+    (Math.abs(settlement.finalAmount || 0) === 0 && !settlement.totalRefundableAmount && !settlement.totalPayableAmount);
+
+  if (isZero) {
+    return {
+      targetTotal: 0,
+      amountSettled: 0,
+      amountPending: 0,
+      status: 'fully_settled',
+      direction: 'zero_balance',
+      partyMessage: 'No amount is payable by either party.',
+      directionTitle: 'FULLY SETTLED',
+      statusLabel: 'FULLY SETTLED',
+    };
+  }
+
+  const isRefundable = settlement.finalStatus === 'refundable' || 
+    (settlement.totalRefundableAmount !== undefined && settlement.totalRefundableAmount > 0) ||
+    settlement.settlementDirection === 'refund_to_tenant';
+
+  if (isRefundable) {
+    const targetTotal = Math.round(
+      (settlement.totalRefundableAmount !== undefined 
+        ? settlement.totalRefundableAmount 
+        : Math.abs(settlement.finalAmount || 0)) * 100
+    ) / 100;
+
+    const refundTxs = (settlement.transactions || []).filter(t => t.type === 'refund');
+    const amountSettled = Math.round(
+      refundTxs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0) * 100
+    ) / 100;
+
+    const amountPending = Math.max(0, Math.round((targetTotal - amountSettled) * 100) / 100);
+
+    let status: SettlementPaymentStatus = 'refund_pending';
+    let statusLabel = 'REFUND PENDING';
+
+    if (amountSettled >= targetTotal && targetTotal > 0) {
+      status = 'fully_settled';
+      statusLabel = 'FULLY SETTLED';
+    } else if (amountSettled > 0) {
+      status = 'partially_refunded';
+      statusLabel = 'PARTIALLY REFUNDED';
+    } else {
+      status = 'refund_pending';
+      statusLabel = 'REFUND PENDING';
+    }
+
+    const partyMessage = status === 'fully_settled'
+      ? `The landlord has fully refunded ₹${targetTotal.toLocaleString('en-IN')} to the tenant.`
+      : `The landlord must refund ₹${amountPending.toLocaleString('en-IN')} to the tenant.`;
+
+    return {
+      targetTotal,
+      amountSettled,
+      amountPending,
+      status,
+      direction: 'refund_to_tenant',
+      partyMessage,
+      directionTitle: 'REFUND PAYABLE TO TENANT',
+      statusLabel,
+    };
+  }
+
+  // Payment by tenant
+  const targetTotal = Math.round(
+    (settlement.totalPayableAmount !== undefined 
+      ? settlement.totalPayableAmount 
+      : Math.abs(settlement.finalAmount || 0)) * 100
+  ) / 100;
+
+  const paymentTxs = (settlement.transactions || []).filter(t => t.type === 'payment_received');
+  const amountSettled = Math.round(
+    paymentTxs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0) * 100
+  ) / 100;
+
+  const amountPending = Math.max(0, Math.round((targetTotal - amountSettled) * 100) / 100);
+
+  let status: SettlementPaymentStatus = 'payment_pending';
+  let statusLabel = 'PAYMENT PENDING';
+
+  if (amountSettled >= targetTotal && targetTotal > 0) {
+    status = 'fully_settled';
+    statusLabel = 'FULLY SETTLED';
+  } else if (amountSettled > 0) {
+    status = 'partially_paid';
+    statusLabel = 'PARTIALLY PAID';
+  } else {
+    status = 'payment_pending';
+    statusLabel = 'PAYMENT PENDING';
+  }
+
+  const partyMessage = status === 'fully_settled'
+    ? `The tenant has fully paid ₹${targetTotal.toLocaleString('en-IN')} to the landlord.`
+    : `The tenant must pay ₹${amountPending.toLocaleString('en-IN')} to the landlord.`;
+
+  return {
+    targetTotal,
+    amountSettled,
+    amountPending,
+    status,
+    direction: 'payment_by_tenant',
+    partyMessage,
+    directionTitle: 'PAYMENT PAYABLE BY TENANT',
+    statusLabel,
+  };
+};
 
 /**
  * Calculates the exact eligible extra stay days between normal period end and actual move-out date.
@@ -379,6 +507,14 @@ export const settlementService = {
 
     finalAmount: number;
     finalStatus: 'payable' | 'refundable' | 'zero_balance';
+    settlementDirection?: 'refund_to_tenant' | 'payment_by_tenant' | 'zero_balance';
+
+    totalRefundableAmount?: number;
+    totalPayableAmount?: number;
+    amountSettled?: number;
+    amountPending?: number;
+    paymentStatus?: SettlementPaymentStatus;
+    transactions?: SettlementTransaction[];
 
     notes?: string;
     settlementDate: string;
@@ -401,10 +537,27 @@ export const settlementService = {
     const year = new Date().getFullYear();
     const settlementNumber = await this.generateSettlementNumber(data.ownerId, year);
 
+    // Compute consistent status values
+    const statusSummary = computeSettlementStatus({
+      finalAmount: data.finalAmount,
+      finalStatus: data.finalStatus,
+      settlementDirection: data.settlementDirection,
+      totalRefundableAmount: data.totalRefundableAmount,
+      totalPayableAmount: data.totalPayableAmount,
+      transactions: data.transactions || [],
+    });
+
     // 2. Persist the durable settlement document
     const settlementPayload: Omit<Settlement, 'id' | 'createdAt' | 'updatedAt'> = {
       ...data,
       settlementNumber,
+      settlementDirection: statusSummary.direction,
+      totalRefundableAmount: statusSummary.direction === 'refund_to_tenant' ? statusSummary.targetTotal : 0,
+      totalPayableAmount: statusSummary.direction === 'payment_by_tenant' ? statusSummary.targetTotal : 0,
+      amountSettled: statusSummary.amountSettled,
+      amountPending: statusSummary.amountPending,
+      paymentStatus: statusSummary.status,
+      transactions: data.transactions || [],
     };
 
     const newSettlement = await db.addDoc<Settlement>(COLLECTION, settlementPayload);
@@ -439,6 +592,115 @@ export const settlementService = {
     db.clearCache('settlements');
 
     return newSettlement;
+  },
+
+  /**
+   * Records a payment received from tenant or a refund paid to tenant for a final settlement.
+   * Enforces validations against over-refunds or overpayments and updates settlement status.
+   */
+  async recordSettlementTransaction(params: {
+    settlementId: string;
+    type: SettlementTransactionType;
+    amount: number;
+    date: string;
+    paymentMethod: PaymentMethod;
+    transactionReference?: string;
+    notes?: string;
+  }): Promise<Settlement> {
+    const settlement = await this.getSettlementById(params.settlementId);
+    if (!settlement) {
+      throw new Error('Settlement record not found.');
+    }
+
+    const currentStatus = computeSettlementStatus(settlement);
+
+    if (params.amount <= 0) {
+      throw new Error('Transaction amount must be greater than zero.');
+    }
+
+    if (params.amount > currentStatus.amountPending + 0.01) {
+      const pendingFormatted = currentStatus.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+      throw new Error(
+        `Amount (₹${params.amount}) exceeds remaining pending settlement balance (₹${pendingFormatted}).`
+      );
+    }
+
+    const newTx: SettlementTransaction = {
+      id: `stx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      settlementId: settlement.id!,
+      tenantId: settlement.tenantId,
+      ownerId: settlement.ownerId,
+      type: params.type,
+      amount: Math.round(params.amount * 100) / 100,
+      date: params.date || new Date().toISOString().split('T')[0],
+      paymentMethod: params.paymentMethod,
+      transactionReference: params.transactionReference?.trim() || undefined,
+      notes: params.notes?.trim() || undefined,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedTransactions = [...(settlement.transactions || []), newTx];
+    const newStatus = computeSettlementStatus({
+      ...settlement,
+      transactions: updatedTransactions,
+    });
+
+    await db.updateDoc<Settlement>(COLLECTION, settlement.id!, {
+      transactions: updatedTransactions,
+      amountSettled: newStatus.amountSettled,
+      amountPending: newStatus.amountPending,
+      paymentStatus: newStatus.status,
+      updatedAt: new Date().toISOString(),
+    } as any);
+
+    db.clearCache(COLLECTION);
+
+    return {
+      ...settlement,
+      transactions: updatedTransactions,
+      amountSettled: newStatus.amountSettled,
+      amountPending: newStatus.amountPending,
+      paymentStatus: newStatus.status,
+      updatedAt: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Deletes a settlement transaction and safely recomputes balances.
+   */
+  async deleteSettlementTransaction(
+    settlementId: string,
+    transactionId: string
+  ): Promise<Settlement> {
+    const settlement = await this.getSettlementById(settlementId);
+    if (!settlement) {
+      throw new Error('Settlement record not found.');
+    }
+
+    const updatedTransactions = (settlement.transactions || []).filter(t => t.id !== transactionId);
+    const newStatus = computeSettlementStatus({
+      ...settlement,
+      transactions: updatedTransactions,
+    });
+
+    await db.updateDoc<Settlement>(COLLECTION, settlement.id!, {
+      transactions: updatedTransactions,
+      amountSettled: newStatus.amountSettled,
+      amountPending: newStatus.amountPending,
+      paymentStatus: newStatus.status,
+      updatedAt: new Date().toISOString(),
+    } as any);
+
+    db.clearCache(COLLECTION);
+
+    return {
+      ...settlement,
+      transactions: updatedTransactions,
+      amountSettled: newStatus.amountSettled,
+      amountPending: newStatus.amountPending,
+      paymentStatus: newStatus.status,
+      updatedAt: new Date().toISOString(),
+    };
   },
 };
 

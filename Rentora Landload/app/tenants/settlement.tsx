@@ -1,18 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, ActivityIndicator } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  ScrollView, 
+  TouchableOpacity, 
+  Alert, 
+  Platform, 
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView
+} from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTheme, useStyles, typography, spacing } from '../../theme';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import AppButton from '../../components/ui/AppButton';
 import LoadingView from '../../components/ui/LoadingView';
-import MoneyText from '../../components/ui/MoneyText';
-import { Settlement, Tenant, Property, Unit, BillSettings } from '../../types';
+import { Settlement, Tenant, Property, BillSettings, PaymentMethod, SettlementTransaction } from '../../types';
 import db from '../../utils/db';
-import { settlementService } from '../../services/settlementService';
+import { settlementService, computeSettlementStatus } from '../../services/settlementService';
 import { pdfService } from '../../services/pdfService';
 import { shareUtils } from '../../utils/shareUtils';
 import { settingsService } from '../../services/settingsService';
-import { formatBillDate } from '../../utils/date';
+import { formatBillDate, formatShortBillDate } from '../../utils/date';
 
 export default function SettlementDetailsScreen() {
   const { colors } = useTheme();
@@ -26,6 +38,18 @@ export default function SettlementDetailsScreen() {
   const [settings, setSettings] = useState<BillSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  // Record Transaction Modal State
+  const [showTxModal, setShowTxModal] = useState(false);
+  const [txType, setTxType] = useState<'refund' | 'payment_received'>('refund');
+  const [txAmount, setTxAmount] = useState('');
+  const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
+  const [txDateValue, setTxDateValue] = useState(new Date());
+  const [showTxDatePicker, setShowTxDatePicker] = useState(false);
+  const [txMethod, setTxMethod] = useState<PaymentMethod>('upi');
+  const [txReference, setTxReference] = useState('');
+  const [txNotes, setTxNotes] = useState('');
+  const [isSavingTx, setIsSavingTx] = useState(false);
 
   useEffect(() => {
     const loadSettlement = async () => {
@@ -72,16 +96,12 @@ export default function SettlementDetailsScreen() {
     return <LoadingView message="Loading settlement statement..." />;
   }
 
-  const isPayable = settlement.finalStatus === 'payable';
-  const isRefundable = settlement.finalStatus === 'refundable';
-  const isZero = settlement.finalStatus === 'zero_balance';
+  const statusInfo = computeSettlementStatus(settlement);
+  const isPayable = statusInfo.direction === 'payment_by_tenant';
+  const isRefundable = statusInfo.direction === 'refund_to_tenant';
+  const isZero = statusInfo.direction === 'zero_balance';
 
   const statusColor = isPayable ? colors.danger : isRefundable ? colors.secondary : colors.textSecondary;
-  const statusTitle = isPayable
-    ? 'Amount Payable by Tenant'
-    : isRefundable
-    ? 'Amount Refundable to Tenant'
-    : 'Fully Settled (Zero Balance)';
 
   const handleSharePdf = async () => {
     if (!tenant) return;
@@ -100,6 +120,91 @@ export default function SettlementDetailsScreen() {
     }
   };
 
+  const openRecordRefund = () => {
+    setTxType('refund');
+    setTxAmount(statusInfo.amountPending > 0 ? String(statusInfo.amountPending) : '');
+    setTxDate(new Date().toISOString().split('T')[0]);
+    setTxDateValue(new Date());
+    setTxMethod('upi');
+    setTxReference('');
+    setTxNotes('');
+    setShowTxModal(true);
+  };
+
+  const openRecordPayment = () => {
+    setTxType('payment_received');
+    setTxAmount(statusInfo.amountPending > 0 ? String(statusInfo.amountPending) : '');
+    setTxDate(new Date().toISOString().split('T')[0]);
+    setTxDateValue(new Date());
+    setTxMethod('upi');
+    setTxReference('');
+    setTxNotes('');
+    setShowTxModal(true);
+  };
+
+  const handleSaveTransaction = async () => {
+    const enteredAmount = parseFloat(txAmount);
+    if (isNaN(enteredAmount) || enteredAmount <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount greater than zero.');
+      return;
+    }
+
+    if (enteredAmount > statusInfo.amountPending + 0.01) {
+      Alert.alert(
+        'Amount Exceeds Pending Balance',
+        `Entered amount (₹${enteredAmount}) cannot exceed the remaining pending balance of ₹${statusInfo.amountPending.toLocaleString('en-IN')}.`
+      );
+      return;
+    }
+
+    setIsSavingTx(true);
+    try {
+      const updatedSettlement = await settlementService.recordSettlementTransaction({
+        settlementId: settlement.id!,
+        type: txType,
+        amount: enteredAmount,
+        date: txDate,
+        paymentMethod: txMethod,
+        transactionReference: txReference,
+        notes: txNotes,
+      });
+      setSettlement(updatedSettlement);
+      setShowTxModal(false);
+      Alert.alert(
+        'Transaction Recorded',
+        txType === 'refund'
+          ? `Refund of ₹${enteredAmount.toLocaleString('en-IN')} recorded successfully.`
+          : `Payment of ₹${enteredAmount.toLocaleString('en-IN')} recorded successfully.`
+      );
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Could not record transaction.');
+    } finally {
+      setIsSavingTx(false);
+    }
+  };
+
+  const handleDeleteTx = (transactionId: string, amount: number) => {
+    Alert.alert(
+      'Delete Transaction',
+      `Are you sure you want to delete this recorded transaction of ₹${amount.toLocaleString('en-IN')}? The remaining settlement balance will be restored.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const updated = await settlementService.deleteSettlementTransaction(settlement.id!, transactionId);
+              setSettlement(updated);
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Could not delete transaction.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -112,7 +217,7 @@ export default function SettlementDetailsScreen() {
             </View>
             <View style={[styles.statusBadge, { backgroundColor: statusColor + '20', borderColor: statusColor }]}>
               <Text style={[styles.statusText, { color: statusColor }]}>
-                {(settlement.finalStatus || 'settled').toUpperCase()}
+                {statusInfo.statusLabel}
               </Text>
             </View>
           </View>
@@ -132,12 +237,169 @@ export default function SettlementDetailsScreen() {
           </View>
         </View>
 
-        {/* Final Net Amount Highlight Box */}
-        <View style={[styles.netCard, { borderColor: statusColor }]}>
-          <Text style={[styles.netTitle, { color: statusColor }]}>{statusTitle}</Text>
-          <Text style={[styles.netAmount, { color: statusColor }]}>
-            ₹{Math.abs(settlement.finalAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </Text>
+        {/* PROMINENT FINAL SETTLEMENT SUMMARY CARD */}
+        <View style={[styles.summaryCard, { borderColor: statusColor }]}>
+          <View style={styles.summaryTopRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.summaryDirectionTitle, { color: statusColor }]}>
+                {statusInfo.directionTitle}
+              </Text>
+              <Text style={[styles.summaryTargetAmount, { color: statusColor }]}>
+                ₹{statusInfo.targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: statusColor + '20', borderColor: statusColor }]}>
+              <Text style={[styles.statusText, { color: statusColor }]}>
+                {statusInfo.statusLabel}
+              </Text>
+            </View>
+          </View>
+
+          <View style={[styles.messageBox, { backgroundColor: statusColor + '12', borderColor: statusColor + '40' }]}>
+            <Ionicons 
+              name={isZero ? "checkmark-circle" : isRefundable ? "return-down-back" : "arrow-forward-circle"} 
+              size={18} 
+              color={statusColor} 
+            />
+            <Text style={[styles.partyMessageText, { color: colors.text }]}>
+              {statusInfo.partyMessage}
+            </Text>
+          </View>
+
+          {/* Structured Financial Points Table */}
+          <View style={styles.summaryTable}>
+            <View style={styles.tableRow}>
+              <Text style={styles.tableLabel}>1. Total Security Deposit:</Text>
+              <Text style={styles.tableValue}>₹{settlement.securityDepositOriginal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</Text>
+            </View>
+            <View style={styles.tableRow}>
+              <Text style={styles.tableLabel}>2. Refundable Advance Rent:</Text>
+              <Text style={styles.tableValue}>₹{settlement.advanceRentOriginal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</Text>
+            </View>
+            <View style={styles.tableRow}>
+              <Text style={styles.tableLabel}>3. Total Final Charges:</Text>
+              <Text style={[styles.tableValue, { color: colors.danger, fontWeight: '700' }]}>
+                ₹{settlement.totalCharges.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
+            <View style={[styles.tableRow, styles.tableRowHighlight]}>
+              <Text style={styles.tableLabelBold}>4. Net {isRefundable ? 'Refundable' : 'Payable'} Amount:</Text>
+              <Text style={[styles.tableValueBold, { color: statusColor }]}>
+                ₹{statusInfo.targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
+            <View style={styles.tableRow}>
+              <Text style={styles.tableLabel}>5. Payment Direction:</Text>
+              <Text style={styles.tableValue}>
+                {isRefundable ? 'Landlord → Tenant' : isPayable ? 'Tenant → Landlord' : 'Zero Balance'}
+              </Text>
+            </View>
+            <View style={styles.tableRow}>
+              <Text style={styles.tableLabel}>6. Payment Status:</Text>
+              <Text style={[styles.tableValue, { fontWeight: '700', color: statusColor }]}>
+                {statusInfo.statusLabel}
+              </Text>
+            </View>
+
+            {statusInfo.amountSettled > 0 && (
+              <View style={[styles.tableRow, { backgroundColor: colors.secondary + '12' }]}>
+                <Text style={[styles.tableLabel, { color: colors.secondary, fontWeight: '700' }]}>
+                  • Amount Already {isRefundable ? 'Refunded' : 'Received'}:
+                </Text>
+                <Text style={[styles.tableValue, { color: colors.secondary, fontWeight: '700' }]}>
+                  ₹{statusInfo.amountSettled.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </Text>
+              </View>
+            )}
+
+            {!isZero && (
+              <View style={[styles.tableRow, { backgroundColor: statusInfo.amountPending > 0 ? (colors.danger + '10') : (colors.secondary + '10') }]}>
+                <Text style={[styles.tableLabelBold, { color: statusInfo.amountPending > 0 ? colors.danger : colors.secondary }]}>
+                  • Remaining Balance Pending:
+                </Text>
+                <Text style={[styles.tableValueBold, { color: statusInfo.amountPending > 0 ? colors.danger : colors.secondary, fontSize: typography.sizes.md }]}>
+                  ₹{statusInfo.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Action Trigger */}
+          {isRefundable && statusInfo.status !== 'fully_settled' && (
+            <AppButton
+              title={`Record Refund (${statusInfo.status === 'partially_refunded' ? 'Remaining ₹' + statusInfo.amountPending.toLocaleString('en-IN') : 'Pay ₹' + statusInfo.amountPending.toLocaleString('en-IN')})`}
+              onPress={openRecordRefund}
+              icon="cash-outline"
+              style={{ marginTop: spacing.md, backgroundColor: colors.secondary }}
+            />
+          )}
+
+          {isPayable && statusInfo.status !== 'fully_settled' && (
+            <AppButton
+              title={`Record Payment Received (${statusInfo.status === 'partially_paid' ? 'Remaining ₹' + statusInfo.amountPending.toLocaleString('en-IN') : 'Receive ₹' + statusInfo.amountPending.toLocaleString('en-IN')})`}
+              onPress={openRecordPayment}
+              icon="wallet-outline"
+              style={{ marginTop: spacing.md }}
+            />
+          )}
+
+          {statusInfo.status === 'fully_settled' && (
+            <View style={styles.settledCompleteBanner}>
+              <Ionicons name="checkmark-done-circle" size={22} color={colors.secondary} />
+              <Text style={styles.settledCompleteText}>Final Settlement is Fully Settled</Text>
+            </View>
+          )}
+        </View>
+
+        {/* SETTLEMENT TRANSACTION HISTORY CARD */}
+        <View style={styles.card}>
+          <View style={styles.cardTitleRow}>
+            <Ionicons name="time-outline" size={18} color={colors.primary} />
+            <Text style={styles.cardSectionTitle}>Settlement Transaction History</Text>
+          </View>
+
+          {(!settlement.transactions || settlement.transactions.length === 0) ? (
+            <View style={styles.emptyTxBox}>
+              <Ionicons name="receipt-outline" size={32} color={colors.textSecondary} style={{ marginBottom: 4 }} />
+              <Text style={styles.emptyTxText}>No settlement payments or refunds recorded yet.</Text>
+            </View>
+          ) : (
+            settlement.transactions.map((tx: SettlementTransaction, idx: number) => {
+              const isRef = tx.type === 'refund';
+              const txColor = isRef ? colors.secondary : colors.primary;
+              const typeLabel = isRef ? 'Refund Paid' : 'Payment Received';
+
+              return (
+                <View key={tx.id || idx} style={styles.txItem}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <View style={[styles.txBadge, { backgroundColor: txColor + '20', borderColor: txColor }]}>
+                        <Text style={[styles.txBadgeText, { color: txColor }]}>{typeLabel}</Text>
+                      </View>
+                      <Text style={styles.txDate}>{formatBillDate(tx.date)}</Text>
+                    </View>
+                    <Text style={styles.txMethod}>
+                      Method: <Text style={{ fontWeight: '700', textTransform: 'uppercase' }}>{tx.paymentMethod}</Text>
+                      {tx.transactionReference ? ` • Ref: ${tx.transactionReference}` : ''}
+                    </Text>
+                    {tx.notes ? <Text style={styles.txNotes}>{tx.notes}</Text> : null}
+                  </View>
+                  <View style={{ alignItems: 'flex-end', marginLeft: spacing.sm }}>
+                    <Text style={[styles.txAmount, { color: txColor }]}>
+                      ₹{(Number(tx.amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </Text>
+                    <TouchableOpacity 
+                      onPress={() => handleDeleteTx(tx.id, tx.amount)}
+                      style={{ marginTop: 4, padding: 4 }}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
         </View>
 
         {/* Stay & Period Information Card */}
@@ -289,7 +551,7 @@ export default function SettlementDetailsScreen() {
 
           {/* Adjustments */}
           <View style={styles.adjustmentsSection}>
-            <Text style={styles.adjustmentHeader}>Explicit Landlord Adjustments</Text>
+            <Text style={styles.adjustmentHeader}>Explicit Adjustments Applied</Text>
 
             <View style={styles.summaryItem}>
               <Text style={styles.deductionLabel}>(-) Advance Rent Adjusted</Text>
@@ -302,13 +564,13 @@ export default function SettlementDetailsScreen() {
             </View>
 
             <View style={styles.summaryItem}>
-              <Text style={styles.infoLabel}>Advance Rent Remaining / Refunded</Text>
-              <Text style={styles.infoValue}>₹{(settlement.advanceRentRemaining + settlement.advanceRentRefunded).toFixed(2)}</Text>
+              <Text style={styles.infoLabel}>Advance Rent Remaining</Text>
+              <Text style={styles.infoValue}>₹{(settlement.advanceRentRemaining || 0).toFixed(2)}</Text>
             </View>
 
             <View style={styles.summaryItem}>
-              <Text style={styles.infoLabel}>Security Deposit Remaining / Refunded</Text>
-              <Text style={styles.infoValue}>₹{(settlement.securityDepositRemaining + settlement.securityDepositRefunded).toFixed(2)}</Text>
+              <Text style={styles.infoLabel}>Security Deposit Remaining</Text>
+              <Text style={styles.infoValue}>₹{(settlement.securityDepositRemaining || 0).toFixed(2)}</Text>
             </View>
           </View>
         </View>
@@ -338,6 +600,133 @@ export default function SettlementDetailsScreen() {
           style={styles.actionButton}
         />
       </ScrollView>
+
+      {/* RECORD TRANSACTION MODAL */}
+      <Modal
+        visible={showTxModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowTxModal(false)}
+      >
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>
+                  {txType === 'refund' ? 'Record Refund to Tenant' : 'Record Payment Received'}
+                </Text>
+                <Text style={styles.modalSubtitle}>
+                  {txType === 'refund' 
+                    ? `Refund to ${settlement.tenantName}` 
+                    : `Payment from ${settlement.tenantName}`}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowTxModal(false)} style={{ padding: 4 }}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: spacing.md }}>
+              <View style={[styles.balanceInfoBox, { backgroundColor: statusColor + '15', borderColor: statusColor + '40' }]}>
+                <Text style={styles.balanceInfoLabel}>Remaining Pending Balance:</Text>
+                <Text style={[styles.balanceInfoVal, { color: statusColor }]}>
+                  ₹{statusInfo.amountPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </Text>
+              </View>
+
+              {/* Amount */}
+              <Text style={styles.inputLabel}>Transaction Amount (₹) *</Text>
+              <TextInput
+                style={styles.textInput}
+                value={txAmount}
+                onChangeText={setTxAmount}
+                keyboardType="numeric"
+                placeholder={`Enter amount <= ${statusInfo.amountPending}`}
+                placeholderTextColor={colors.textSecondary}
+              />
+
+              {/* Date */}
+              <Text style={styles.inputLabel}>Transaction Date *</Text>
+              <TouchableOpacity 
+                style={styles.datePickerInput}
+                onPress={() => setShowTxDatePicker(true)}
+              >
+                <Ionicons name="calendar-outline" size={18} color={colors.primary} />
+                <Text style={styles.datePickerText}>{txDate}</Text>
+              </TouchableOpacity>
+              {showTxDatePicker && (
+                <DateTimePicker
+                  value={txDateValue}
+                  mode="date"
+                  display="default"
+                  onChange={(e, d) => {
+                    setShowTxDatePicker(Platform.OS === 'ios');
+                    if (d) {
+                      setTxDateValue(d);
+                      setTxDate(d.toISOString().split('T')[0]);
+                    }
+                  }}
+                />
+              )}
+
+              {/* Payment Method */}
+              <Text style={styles.inputLabel}>Payment Method *</Text>
+              <View style={styles.methodRow}>
+                {(['upi', 'cash', 'bank_transfer', 'other'] as PaymentMethod[]).map(m => (
+                  <TouchableOpacity
+                    key={m}
+                    style={[styles.methodChip, txMethod === m && styles.methodChipActive]}
+                    onPress={() => setTxMethod(m)}
+                  >
+                    <Text style={[styles.methodChipText, txMethod === m && styles.methodChipTextActive]}>
+                      {m === 'bank_transfer' ? 'Bank' : m.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Reference */}
+              <Text style={styles.inputLabel}>Reference / Transaction ID (Optional)</Text>
+              <TextInput
+                style={styles.textInput}
+                value={txReference}
+                onChangeText={setTxReference}
+                placeholder="e.g. UPI Ref, IMPS UTR, Cheque No."
+                placeholderTextColor={colors.textSecondary}
+              />
+
+              {/* Notes */}
+              <Text style={styles.inputLabel}>Remarks / Notes (Optional)</Text>
+              <TextInput
+                style={[styles.textInput, { height: 60, textAlignVertical: 'top' }]}
+                value={txNotes}
+                onChangeText={setTxNotes}
+                multiline
+                placeholder="Any additional remarks..."
+                placeholderTextColor={colors.textSecondary}
+              />
+
+              <View style={styles.modalActions}>
+                <AppButton
+                  title="Cancel"
+                  variant="outline"
+                  onPress={() => setShowTxModal(false)}
+                  style={{ flex: 1, marginRight: spacing.sm }}
+                />
+                <AppButton
+                  title={txType === 'refund' ? "Save Refund" : "Save Payment"}
+                  onPress={handleSaveTransaction}
+                  loading={isSavingTx}
+                  style={{ flex: 1, backgroundColor: txType === 'refund' ? colors.secondary : colors.primary }}
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -413,25 +802,97 @@ const getStyles = (colors: any) => StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
-  netCard: {
+  summaryCard: {
     backgroundColor: colors.surface,
     borderRadius: spacing.borderRadius.lg,
     padding: spacing.lg,
     marginBottom: spacing.lg,
     borderWidth: 2,
-    alignItems: 'center',
     ...spacing.shadows.medium,
   },
-  netTitle: {
+  summaryTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.xs,
+  },
+  summaryDirectionTitle: {
+    fontSize: typography.sizes.xs + 1,
+    fontWeight: typography.weights.bold,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  summaryTargetAmount: {
+    fontSize: 28,
+    fontWeight: typography.weights.bold,
+    marginTop: 2,
+  },
+  messageBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
+    padding: spacing.sm + 2,
+    borderRadius: spacing.borderRadius.md,
+    borderWidth: 1,
+    marginVertical: spacing.sm,
+  },
+  partyMessageText: {
+    fontSize: typography.sizes.xs + 2,
+    fontWeight: typography.weights.semibold,
+    flex: 1,
+  },
+  summaryTable: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 5,
+    paddingHorizontal: 4,
+    borderRadius: 4,
+  },
+  tableRowHighlight: {
+    backgroundColor: colors.background,
+    marginVertical: 2,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: colors.border,
+  },
+  tableLabel: {
+    fontSize: typography.sizes.xs + 1,
+    color: colors.textSecondary,
+  },
+  tableLabelBold: {
     fontSize: typography.sizes.xs + 2,
     fontWeight: typography.weights.bold,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 4,
+    color: colors.text,
   },
-  netAmount: {
-    fontSize: 32,
+  tableValue: {
+    fontSize: typography.sizes.xs + 1,
+    fontWeight: typography.weights.semibold,
+    color: colors.text,
+  },
+  tableValueBold: {
+    fontSize: typography.sizes.sm,
     fontWeight: typography.weights.bold,
+  },
+  settledCompleteBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.secondary + '20',
+    paddingVertical: spacing.sm,
+    borderRadius: spacing.borderRadius.md,
+    marginTop: spacing.md,
+  },
+  settledCompleteText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.secondary,
   },
   card: {
     backgroundColor: colors.surface,
@@ -452,9 +913,55 @@ const getStyles = (colors: any) => StyleSheet.create({
     fontSize: typography.sizes.sm + 1,
     fontWeight: typography.weights.bold,
     color: colors.text,
-    marginBottom: spacing.md,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  emptyTxBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+  },
+  emptyTxText: {
+    fontSize: typography.sizes.xs + 1,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+  },
+  txItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border + '60',
+  },
+  txBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  txBadgeText: {
+    fontSize: typography.sizes.xs - 1,
+    fontWeight: typography.weights.bold,
+  },
+  txDate: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+  },
+  txMethod: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  txNotes: {
+    fontSize: typography.sizes.xs,
+    color: colors.text,
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  txAmount: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
   },
   infoRow: {
     flexDirection: 'row',
@@ -532,5 +1039,119 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   actionButton: {
     marginBottom: spacing.md,
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: spacing.borderRadius.xl,
+    borderTopRightRadius: spacing.borderRadius.xl,
+    maxHeight: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalTitle: {
+    fontSize: typography.sizes.md + 1,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+  },
+  modalSubtitle: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  balanceInfoBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.sm,
+    borderRadius: spacing.borderRadius.md,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+  },
+  balanceInfoLabel: {
+    fontSize: typography.sizes.xs + 1,
+    fontWeight: typography.weights.semibold,
+    color: colors.text,
+  },
+  balanceInfoVal: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+  },
+  inputLabel: {
+    fontSize: typography.sizes.xs + 1,
+    fontWeight: typography.weights.bold,
+    color: colors.text,
+    marginBottom: 4,
+    marginTop: spacing.xs,
+  },
+  textInput: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: spacing.borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  datePickerInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: spacing.borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  datePickerText: {
+    fontSize: typography.sizes.sm,
+    color: colors.text,
+  },
+  methodRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  methodChip: {
+    flex: 1,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: spacing.borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
+  methodChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '15',
+  },
+  methodChipText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
+    color: colors.textSecondary,
+  },
+  methodChipTextActive: {
+    color: colors.primary,
+    fontWeight: typography.weights.bold,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    marginTop: spacing.md,
+    marginBottom: spacing.lg,
   },
 });

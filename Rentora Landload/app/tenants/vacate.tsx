@@ -179,9 +179,14 @@ export default function MoveOutSettlementScreen() {
         electricityCharge: 0,
         electricityUnits: 0,
         electricityValid: true,
+        electricityError: undefined as string | undefined,
         outstandingBillsBalance: 0,
         otherCharges: 0,
         totalCharges: 0,
+        totalSecurityDeposit: 0,
+        totalAdvanceRent: 0,
+        totalAvailableFunds: 0,
+        netDifference: 0,
         advanceAdjusted: 0,
         advanceRefunded: 0,
         advanceRemaining: 0,
@@ -190,6 +195,13 @@ export default function MoveOutSettlementScreen() {
         depositRemaining: 0,
         netFinalAmount: 0,
         finalStatus: 'zero_balance' as const,
+        settlementDirection: 'zero_balance' as const,
+        totalRefundableAmount: 0,
+        totalPayableAmount: 0,
+        amountPending: 0,
+        initialPaymentStatus: 'fully_settled' as const,
+        directionTitle: 'FULLY SETTLED',
+        partyMessage: 'No amount is payable by either party.',
       };
     }
 
@@ -230,45 +242,63 @@ export default function MoveOutSettlementScreen() {
     // Subtotal Charges
     const totalCharges = Math.round((outstandingBillsBalance + elecCalc.charge + extraStay.extraStayAmount + otherCharges) * 100) / 100;
 
-    // 5. Advance Rent Adjustments
-    const currentAdvance = tenant.advanceAmount || 0;
-    let advanceAdjusted = 0;
-    let advanceRefunded = 0;
-    if (advanceAction === 'adjust') {
-      const entered = parseFloat(advanceAdjustAmountInput) || 0;
-      advanceAdjusted = Math.min(currentAdvance, Math.max(0, entered));
-    } else if (advanceAction === 'refund') {
-      const entered = parseFloat(advanceAdjustAmountInput) || 0;
-      advanceRefunded = Math.min(currentAdvance, Math.max(0, entered));
-    }
-    const advanceRemaining = Math.max(0, currentAdvance - advanceAdjusted - advanceRefunded);
+    // 5. Total Security Deposit & Refundable Advance Rent Funds
+    const totalSecurityDeposit = Number(tenant.securityDeposit) || 0;
+    const totalAdvanceRent = Number(tenant.advanceAmount) || 0;
+    const totalAvailableFunds = Math.round((totalSecurityDeposit + totalAdvanceRent) * 100) / 100;
 
-    // 6. Security Deposit Adjustments
-    const currentDeposit = tenant.securityDeposit || 0;
-    let depositAdjusted = 0;
-    let depositRefunded = 0;
-    if (depositAction === 'adjust') {
-      const entered = parseFloat(depositAdjustAmountInput) || 0;
-      depositAdjusted = Math.min(currentDeposit, Math.max(0, entered));
-    } else if (depositAction === 'refund') {
-      const entered = parseFloat(depositAdjustAmountInput) || 0;
-      depositRefunded = Math.min(currentDeposit, Math.max(0, entered));
-    }
-    const depositRemaining = Math.max(0, currentDeposit - depositAdjusted - depositRefunded);
-
-    // Net Final Amount
-    // net = totalCharges - deductions
-    const totalDeductions = advanceAdjusted + depositAdjusted;
-    const netFinalAmount = Math.round((totalCharges - totalDeductions) * 100) / 100;
+    // Net Settlement = Total Security Deposit + Refundable Advance Rent - Total Final Charges
+    const netDifference = Math.round((totalAvailableFunds - totalCharges) * 100) / 100;
 
     let finalStatus: 'payable' | 'refundable' | 'zero_balance' = 'zero_balance';
-    if (netFinalAmount > 0) {
-      finalStatus = 'payable';
-    } else if (netFinalAmount < 0) {
+    let settlementDirection: 'refund_to_tenant' | 'payment_by_tenant' | 'zero_balance' = 'zero_balance';
+    let netFinalAmount = 0;
+    let totalRefundableAmount = 0;
+    let totalPayableAmount = 0;
+    let amountPending = 0;
+    let initialPaymentStatus: 'refund_pending' | 'partially_refunded' | 'payment_pending' | 'partially_paid' | 'fully_settled' = 'fully_settled';
+    let directionTitle = 'FULLY SETTLED';
+    let partyMessage = 'No amount is payable by either party.';
+
+    if (netDifference > 0) {
       finalStatus = 'refundable';
+      settlementDirection = 'refund_to_tenant';
+      netFinalAmount = netDifference;
+      totalRefundableAmount = netDifference;
+      totalPayableAmount = 0;
+      amountPending = netDifference;
+      initialPaymentStatus = 'refund_pending';
+      directionTitle = 'REFUND PAYABLE TO TENANT';
+      partyMessage = `The landlord must refund ₹${netDifference.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to the tenant.`;
+    } else if (netDifference < 0) {
+      finalStatus = 'payable';
+      settlementDirection = 'payment_by_tenant';
+      netFinalAmount = Math.abs(netDifference);
+      totalRefundableAmount = 0;
+      totalPayableAmount = Math.abs(netDifference);
+      amountPending = Math.abs(netDifference);
+      initialPaymentStatus = 'payment_pending';
+      directionTitle = 'PAYMENT PAYABLE BY TENANT';
+      partyMessage = `The tenant must pay ₹${Math.abs(netDifference).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to the landlord.`;
     } else {
       finalStatus = 'zero_balance';
+      settlementDirection = 'zero_balance';
+      netFinalAmount = 0;
+      totalRefundableAmount = 0;
+      totalPayableAmount = 0;
+      amountPending = 0;
+      initialPaymentStatus = 'fully_settled';
+      directionTitle = 'FULLY SETTLED';
+      partyMessage = 'No amount is payable by either party.';
     }
+
+    // Automatic accounting adjustments:
+    // Dues cleared first from Advance Rent, then from Security Deposit
+    const advanceAdjusted = Math.min(totalAdvanceRent, totalCharges);
+    const remainingChargesAfterAdvance = Math.max(0, totalCharges - advanceAdjusted);
+    const depositAdjusted = Math.min(totalSecurityDeposit, remainingChargesAfterAdvance);
+    const advanceRemaining = Math.max(0, totalAdvanceRent - advanceAdjusted);
+    const depositRemaining = Math.max(0, totalSecurityDeposit - depositAdjusted);
 
     return {
       eligibleDays,
@@ -282,14 +312,25 @@ export default function MoveOutSettlementScreen() {
       outstandingBillsBalance,
       otherCharges,
       totalCharges,
+      totalSecurityDeposit,
+      totalAdvanceRent,
+      totalAvailableFunds,
+      netDifference,
       advanceAdjusted,
-      advanceRefunded,
+      advanceRefunded: 0,
       advanceRemaining,
       depositAdjusted,
-      depositRefunded,
+      depositRefunded: 0,
       depositRemaining,
       netFinalAmount,
       finalStatus,
+      settlementDirection,
+      totalRefundableAmount,
+      totalPayableAmount,
+      amountPending,
+      initialPaymentStatus,
+      directionTitle,
+      partyMessage,
     };
   }, [
     tenant,
@@ -301,10 +342,6 @@ export default function MoveOutSettlementScreen() {
     finalMeterReadingInput,
     previousMeterReading,
     otherChargesInput,
-    advanceAction,
-    advanceAdjustAmountInput,
-    depositAction,
-    depositAdjustAmountInput,
   ]);
 
   if (!tenantLoading && !directTenantLoading && !loadingData && !tenant) {
@@ -446,22 +483,18 @@ export default function MoveOutSettlementScreen() {
     }
 
     const netAmountFormatted = Math.abs(calculations.netFinalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-    const netTitle = calculations.finalStatus === 'payable' 
-      ? `Tenant owes: ₹${netAmountFormatted}` 
-      : calculations.finalStatus === 'refundable' 
-      ? `Refund to tenant: ₹${netAmountFormatted}` 
-      : 'Settled with zero balance';
+    const netTitle = calculations.directionTitle;
+    const netMessage = calculations.partyMessage;
 
     Alert.alert(
       'Confirm Final Settlement',
       `Are you sure you want to finalize move-out settlement for ${tenant.name}?\n\n` +
       `• Move-Out Date: ${formatBillDate(moveOutDate)}\n` +
-      `• Extra-Stay Rent: ₹${calculations.extraStayAmount.toFixed(2)} (${calculations.eligibleDays} days)\n` +
-      `• Final Electricity: ₹${calculations.electricityCharge.toFixed(2)}\n` +
-      `• Outstanding Dues: ₹${calculations.outstandingBillsBalance.toFixed(2)}\n` +
-      `• Adjustments Applied: -₹${(calculations.advanceAdjusted + calculations.depositAdjusted).toFixed(2)}\n\n` +
-      `Net Result: ${netTitle}\n\n` +
-      `Unit ${unitNumber || tenant.unitId} will immediately become Vacant. Historical invoices will be preserved.`,
+      `• Security Deposit & Advance: ₹${calculations.totalAvailableFunds.toFixed(2)}\n` +
+      `• Total Final Charges: ₹${calculations.totalCharges.toFixed(2)}\n\n` +
+      `Result: ${netTitle}\nAmount: ₹${netAmountFormatted}\n\n` +
+      `Note: ${netMessage}\n\n` +
+      `Unit ${unitNumber || tenant.unitId} will immediately become Vacant. Historical records will be preserved.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -478,37 +511,19 @@ export default function MoveOutSettlementScreen() {
               if (calculations.advanceAdjusted > 0) {
                 adjustments.push({
                   type: 'advance_rent',
-                  label: 'Advance Rent Adjustment',
+                  label: 'Advance Rent Applied to Final Dues',
                   amount: calculations.advanceAdjusted,
                   action: 'applied_to_dues',
                   reason: 'Applied against settlement dues',
                 });
               }
-              if (calculations.advanceRefunded > 0) {
-                adjustments.push({
-                  type: 'advance_rent',
-                  label: 'Advance Rent Refund',
-                  amount: calculations.advanceRefunded,
-                  action: 'refunded',
-                  reason: 'Refunded to tenant upon move-out',
-                });
-              }
               if (calculations.depositAdjusted > 0) {
                 adjustments.push({
                   type: 'security_deposit',
-                  label: 'Security Deposit Adjustment',
+                  label: 'Security Deposit Applied to Final Dues',
                   amount: calculations.depositAdjusted,
                   action: 'applied_to_dues',
                   reason: 'Applied against settlement dues',
-                });
-              }
-              if (calculations.depositRefunded > 0) {
-                adjustments.push({
-                  type: 'security_deposit',
-                  label: 'Security Deposit Refund',
-                  amount: calculations.depositRefunded,
-                  action: 'refunded',
-                  reason: 'Refunded to tenant upon move-out',
                 });
               }
 
@@ -545,20 +560,27 @@ export default function MoveOutSettlementScreen() {
                 otherChargesNotes,
                 totalCharges: calculations.totalCharges,
 
-                advanceRentOriginal: tenant.advanceAmount || 0,
+                advanceRentOriginal: calculations.totalAdvanceRent,
                 advanceRentAdjusted: calculations.advanceAdjusted,
-                advanceRentRefunded: calculations.advanceRefunded,
+                advanceRentRefunded: 0,
                 advanceRentRemaining: calculations.advanceRemaining,
 
-                securityDepositOriginal: tenant.securityDeposit || 0,
+                securityDepositOriginal: calculations.totalSecurityDeposit,
                 securityDepositAdjusted: calculations.depositAdjusted,
-                securityDepositRefunded: calculations.depositRefunded,
+                securityDepositRefunded: 0,
                 securityDepositRemaining: calculations.depositRemaining,
 
                 adjustments,
 
                 finalAmount: calculations.netFinalAmount,
                 finalStatus: calculations.finalStatus,
+                settlementDirection: calculations.settlementDirection,
+                totalRefundableAmount: calculations.totalRefundableAmount,
+                totalPayableAmount: calculations.totalPayableAmount,
+                amountSettled: 0,
+                amountPending: calculations.amountPending,
+                paymentStatus: calculations.initialPaymentStatus,
+                transactions: [],
 
                 notes: settlementNotes,
                 settlementDate: new Date().toISOString().split('T')[0],
@@ -839,107 +861,47 @@ export default function MoveOutSettlementScreen() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>5. Advance Rent & Security Deposit</Text>
           <Text style={styles.cardSubtitle}>
-            Balances remain completely independent. Require explicit landlord confirmation for any adjustment or refund.
+            Available refundable tenant funds are automatically adjusted against final dues to compute net settlement.
           </Text>
 
           {/* Advance Rent */}
           <View style={styles.depositBox}>
             <View style={styles.depositHeader}>
               <Text style={styles.depositTitle}>Advance Rent Balance</Text>
-              <Text style={styles.depositBalance}>₹{tenant.advanceAmount || 0}</Text>
+              <Text style={styles.depositBalance}>₹{calculations.totalAdvanceRent.toLocaleString('en-IN')}</Text>
             </View>
-
-            <View style={styles.actionButtonGroup}>
-              {(['keep', 'adjust', 'refund'] as const).map((act) => (
-                <TouchableOpacity
-                  key={act}
-                  style={[styles.toggleBtn, advanceAction === act && styles.toggleBtnActive]}
-                  onPress={() => {
-                    setAdvanceAction(act);
-                    if (act === 'adjust') {
-                      const maxDues = calculations.totalCharges;
-                      const maxPossible = Math.min(tenant.advanceAmount || 0, maxDues);
-                      setAdvanceAdjustAmountInput(String(maxPossible));
-                    } else if (act === 'refund') {
-                      setAdvanceAdjustAmountInput(String(tenant.advanceAmount || 0));
-                    } else {
-                      setAdvanceAdjustAmountInput('0');
-                    }
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.toggleBtnText, advanceAction === act && styles.toggleBtnTextActive]}>
-                    {act === 'keep' ? 'Keep Separate' : act === 'adjust' ? 'Adjust Towards Dues' : 'Refund'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={styles.calcRow}>
+              <Text style={styles.calcLabel}>Applied to Final Dues:</Text>
+              <Text style={[styles.calcValue, { color: colors.secondary, fontWeight: '700' }]}>
+                (-) ₹{calculations.advanceAdjusted.toFixed(2)}
+              </Text>
             </View>
-
-            {advanceAction !== 'keep' && (
-              <View style={{ marginTop: spacing.sm }}>
-                <Text style={styles.label}>
-                  {advanceAction === 'adjust' ? 'Amount to Adjust Against Dues (₹)' : 'Amount to Refund (₹)'}
-                </Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={advanceAdjustAmountInput}
-                  onChangeText={setAdvanceAdjustAmountInput}
-                  keyboardType="numeric"
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                />
-              </View>
-            )}
+            <View style={[styles.calcRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+              <Text style={styles.calcLabel}>Remaining Advance Balance:</Text>
+              <Text style={[styles.calcValue, { fontWeight: '700' }]}>
+                ₹{calculations.advanceRemaining.toFixed(2)}
+              </Text>
+            </View>
           </View>
 
           {/* Security Deposit */}
           <View style={[styles.depositBox, { marginTop: spacing.md }]}>
             <View style={styles.depositHeader}>
               <Text style={styles.depositTitle}>Security Deposit Balance</Text>
-              <Text style={styles.depositBalance}>₹{tenant.securityDeposit || 0}</Text>
+              <Text style={styles.depositBalance}>₹{calculations.totalSecurityDeposit.toLocaleString('en-IN')}</Text>
             </View>
-
-            <View style={styles.actionButtonGroup}>
-              {(['keep', 'adjust', 'refund'] as const).map((act) => (
-                <TouchableOpacity
-                  key={act}
-                  style={[styles.toggleBtn, depositAction === act && styles.toggleBtnActive]}
-                  onPress={() => {
-                    setDepositAction(act);
-                    if (act === 'adjust') {
-                      const remainingDues = Math.max(0, calculations.totalCharges - calculations.advanceAdjusted);
-                      const maxPossible = Math.min(tenant.securityDeposit || 0, remainingDues);
-                      setDepositAdjustAmountInput(String(maxPossible));
-                    } else if (act === 'refund') {
-                      setDepositAdjustAmountInput(String(tenant.securityDeposit || 0));
-                    } else {
-                      setDepositAdjustAmountInput('0');
-                    }
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.toggleBtnText, depositAction === act && styles.toggleBtnTextActive]}>
-                    {act === 'keep' ? 'Keep Separate' : act === 'adjust' ? 'Adjust Towards Dues' : 'Refund'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={styles.calcRow}>
+              <Text style={styles.calcLabel}>Applied to Final Dues:</Text>
+              <Text style={[styles.calcValue, { color: colors.secondary, fontWeight: '700' }]}>
+                (-) ₹{calculations.depositAdjusted.toFixed(2)}
+              </Text>
             </View>
-
-            {depositAction !== 'keep' && (
-              <View style={{ marginTop: spacing.sm }}>
-                <Text style={styles.label}>
-                  {depositAction === 'adjust' ? 'Amount to Adjust Against Dues (₹)' : 'Amount to Refund (₹)'}
-                </Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={depositAdjustAmountInput}
-                  onChangeText={setDepositAdjustAmountInput}
-                  keyboardType="numeric"
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                />
-              </View>
-            )}
+            <View style={[styles.calcRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+              <Text style={styles.calcLabel}>Remaining Deposit Balance:</Text>
+              <Text style={[styles.calcValue, { fontWeight: '700' }]}>
+                ₹{calculations.depositRemaining.toFixed(2)}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -961,53 +923,55 @@ export default function MoveOutSettlementScreen() {
           <Text style={styles.previewTitle}>Final Settlement Preview</Text>
 
           <View style={styles.previewRow}>
-            <Text style={styles.previewLabel}>Historical Unpaid Bills / Arrears</Text>
-            <Text style={styles.previewValue}>₹{calculations.outstandingBillsBalance.toFixed(2)}</Text>
+            <Text style={styles.previewLabel}>1. Total Security Deposit</Text>
+            <Text style={styles.previewValue}>₹{calculations.totalSecurityDeposit.toFixed(2)}</Text>
           </View>
 
           <View style={styles.previewRow}>
-            <Text style={styles.previewLabel}>Final Electricity Charge</Text>
-            <Text style={styles.previewValue}>₹{calculations.electricityCharge.toFixed(2)}</Text>
+            <Text style={styles.previewLabel}>2. Refundable Advance Rent</Text>
+            <Text style={styles.previewValue}>₹{calculations.totalAdvanceRent.toFixed(2)}</Text>
           </View>
-
-          <View style={styles.previewRow}>
-            <Text style={styles.previewLabel}>Extra-Stay Rent ({calculations.eligibleDays} days)</Text>
-            <Text style={styles.previewValue}>₹{calculations.extraStayAmount.toFixed(2)}</Text>
-          </View>
-
-          {calculations.otherCharges > 0 && (
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>Other Charges</Text>
-              <Text style={styles.previewValue}>₹{calculations.otherCharges.toFixed(2)}</Text>
-            </View>
-          )}
 
           <View style={[styles.previewRow, styles.previewDivider]}>
-            <Text style={styles.previewLabelBold}>Subtotal Payable Charges</Text>
-            <Text style={styles.previewValueBold}>₹{calculations.totalCharges.toFixed(2)}</Text>
+            <Text style={styles.previewLabelBold}>3. Total Final Charges</Text>
+            <Text style={[styles.previewValueBold, { color: colors.danger }]}>₹{calculations.totalCharges.toFixed(2)}</Text>
           </View>
 
-          {calculations.advanceAdjusted > 0 && (
-            <View style={styles.previewRow}>
-              <Text style={[styles.previewLabel, { color: colors.secondary }]}>(-) Advance Rent Adjusted</Text>
-              <Text style={[styles.previewValue, { color: colors.secondary }]}>-₹{calculations.advanceAdjusted.toFixed(2)}</Text>
-            </View>
-          )}
+          <View style={styles.previewRow}>
+            <Text style={[styles.previewLabel, { color: colors.textSecondary, fontSize: typography.sizes.xs }]}>
+              • Outstanding Bills: ₹{calculations.outstandingBillsBalance.toFixed(2)} | Electricity: ₹{calculations.electricityCharge.toFixed(2)}
+            </Text>
+          </View>
+          <View style={styles.previewRow}>
+            <Text style={[styles.previewLabel, { color: colors.textSecondary, fontSize: typography.sizes.xs }]}>
+              • Extra-Stay ({calculations.eligibleDays}d): ₹{calculations.extraStayAmount.toFixed(2)}{calculations.otherCharges > 0 ? ` | Other: ₹${calculations.otherCharges.toFixed(2)}` : ''}
+            </Text>
+          </View>
 
-          {calculations.depositAdjusted > 0 && (
-            <View style={styles.previewRow}>
-              <Text style={[styles.previewLabel, { color: colors.secondary }]}>(-) Security Deposit Adjusted</Text>
-              <Text style={[styles.previewValue, { color: colors.secondary }]}>-₹{calculations.depositAdjusted.toFixed(2)}</Text>
-            </View>
-          )}
+          <View style={[styles.previewRow, styles.previewDivider]}>
+            <Text style={styles.previewLabelBold}>
+              4. Net {calculations.finalStatus === 'refundable' ? 'Refundable' : 'Payable'} Amount
+            </Text>
+            <Text style={[styles.previewValueBold, { color: calculations.finalStatus === 'payable' ? colors.danger : colors.secondary }]}>
+              ₹{Math.abs(calculations.netFinalAmount).toFixed(2)}
+            </Text>
+          </View>
 
           <View style={[styles.netResultBox, { borderColor: calculations.finalStatus === 'payable' ? colors.danger : colors.secondary }]}>
             <Text style={[styles.netResultLabel, { color: calculations.finalStatus === 'payable' ? colors.danger : colors.secondary }]}>
-              {calculations.finalStatus === 'payable' ? 'AMOUNT PAYABLE BY TENANT' : calculations.finalStatus === 'refundable' ? 'AMOUNT REFUNDABLE TO TENANT' : 'FULLY SETTLED (ZERO BALANCE)'}
+              {calculations.directionTitle}
             </Text>
             <Text style={[styles.netResultAmount, { color: calculations.finalStatus === 'payable' ? colors.danger : colors.secondary }]}>
               ₹{Math.abs(calculations.netFinalAmount).toFixed(2)}
             </Text>
+            <Text style={{ color: colors.text, marginTop: 4, textAlign: 'center', fontSize: typography.sizes.xs + 1, fontWeight: '600' }}>
+              {calculations.partyMessage}
+            </Text>
+            <View style={{ marginTop: 8, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, backgroundColor: (calculations.finalStatus === 'payable' ? colors.danger : colors.secondary) + '20' }}>
+              <Text style={{ fontSize: typography.sizes.xs, fontWeight: '700', color: calculations.finalStatus === 'payable' ? colors.danger : colors.secondary }}>
+                STATUS: {calculations.initialPaymentStatus.replace('_', ' ').toUpperCase()}
+              </Text>
+            </View>
           </View>
         </View>
 

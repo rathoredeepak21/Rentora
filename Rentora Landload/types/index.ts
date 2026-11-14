@@ -233,6 +233,29 @@ export interface SettlementAdjustment {
   reason?: string;
 }
 
+export type SettlementPaymentStatus = 
+  | 'refund_pending'
+  | 'partially_refunded'
+  | 'payment_pending'
+  | 'partially_paid'
+  | 'fully_settled';
+
+export type SettlementTransactionType = 'refund' | 'payment_received';
+
+export interface SettlementTransaction {
+  id: string;
+  settlementId: string;
+  tenantId: string;
+  ownerId: string;
+  type: SettlementTransactionType;
+  amount: number;
+  date: string; // "YYYY-MM-DD"
+  paymentMethod: PaymentMethod;
+  transactionReference?: string;
+  notes?: string;
+  createdAt: string; // ISO string
+}
+
 export interface Settlement {
   id?: string;
   settlementNumber: string;
@@ -289,6 +312,15 @@ export interface Settlement {
   // Net final settlement
   finalAmount: number; // positive = payable by tenant, negative = refundable to tenant
   finalStatus: 'payable' | 'refundable' | 'zero_balance';
+  settlementDirection?: 'refund_to_tenant' | 'payment_by_tenant' | 'zero_balance';
+
+  // Refund & Payment tracking
+  totalRefundableAmount?: number;
+  totalPayableAmount?: number;
+  amountSettled?: number;
+  amountPending?: number;
+  paymentStatus?: SettlementPaymentStatus;
+  transactions?: SettlementTransaction[];
 
   notes?: string;
   settlementDate: string;
