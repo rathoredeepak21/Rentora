@@ -1092,7 +1092,10 @@
             </div>
             <div class="form-group" style="margin-bottom: 0;">
               <label class="form-label" for="rptPropertySelect">Property</label>
-              <select id="rptPropertySelect" class="form-control" onchange="handleReportPropertyChange(this.value)">
+              <select id="rptPropertySelect" class="form-control" 
+                      onfocus="if (typeof renderReportsPanel === 'function') renderReportsPanel();" 
+                      onmousedown="if (typeof renderReportsPanel === 'function') renderReportsPanel();"
+                      onchange="handleReportPropertyChange(this.value)">
                 <option value="">— Select a property —</option>
               </select>
               <div id="rptPropertyHelperText" style="margin-top: 6px;"></div>

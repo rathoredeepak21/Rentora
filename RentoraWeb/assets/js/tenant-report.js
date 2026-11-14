@@ -128,9 +128,10 @@
   // ── State accessor ─────────────────────────────────────────────────────────
   function getState() {
     if (typeof window.__rentoraStateGetter === 'function') {
-      return window.__rentoraStateGetter();
+      const s = window.__rentoraStateGetter();
+      if (s) return s;
     }
-    return window.__rentoraState || null;
+    return window.__rentoraState || window.state || null;
   }
 
   // ── 30-day expiry check (for Vacated Tenants only) ──────────────────────────
@@ -543,46 +544,66 @@
 
     let st = getState();
 
-    // Check if properties are empty in state, but owner is authenticated in Firebase
-    if ((!st || !st.properties || st.properties.length === 0) && typeof window.fbDb !== 'undefined' && typeof window.fbAuth !== 'undefined') {
-      const currentUid = (st && st.currentUser && st.currentUser.uid) || (window.fbAuth.currentUser && window.fbAuth.currentUser.uid);
-      if (currentUid) {
-        try {
-          propSel.disabled = true;
-          propSel.innerHTML = '<option value="">Loading properties...</option>';
-          const snapshot = await window.fbDb.collection('properties')
-            .where('ownerId', '==', currentUid)
-            .get();
-          const fetched = snapshot.docs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .filter(p => !p.isDeleted);
-          if (st) {
-            st.properties = fetched;
-            if (!st.activeProperty && fetched.length > 0) st.activeProperty = fetched[0];
+    // 1. Gather properties from state or topbar dropdown
+    let properties = (st && Array.isArray(st.properties) && st.properties.length > 0) ? [...st.properties] : [];
+    if (properties.length === 0 && window.state && Array.isArray(window.state.properties) && window.state.properties.length > 0) {
+      properties = [...window.state.properties];
+    }
+    if (properties.length === 0 && window.__rentoraState && Array.isArray(window.__rentoraState.properties) && window.__rentoraState.properties.length > 0) {
+      properties = [...window.__rentoraState.properties];
+    }
+
+    // 2. Direct Firestore fallback if properties still empty
+    const db = window.fbDb || (typeof firebase !== 'undefined' && firebase.firestore ? firebase.firestore() : null);
+    const auth = window.fbAuth || (typeof firebase !== 'undefined' && firebase.auth ? firebase.auth() : null);
+    const currentUid = (st && st.currentUser && st.currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid);
+
+    if (properties.length === 0 && db && currentUid) {
+      try {
+        const snapshot = await db.collection('properties')
+          .where('ownerId', '==', currentUid)
+          .get();
+        const fetched = snapshot.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(p => !p.isDeleted);
+        if (fetched.length > 0) {
+          properties = fetched;
+          if (st) st.properties = fetched;
+          if (window.state) window.state.properties = fetched;
+        }
+      } catch (fetchErr) {
+        console.warn('Notice: Firestore property fetch in reports:', fetchErr);
+      }
+    }
+
+    // 3. Fallback: inspect topbar property select dropdown
+    if (properties.length === 0) {
+      const topbarSel = document.getElementById('propertySelectDropdown');
+      if (topbarSel && topbarSel.options) {
+        for (let i = 0; i < topbarSel.options.length; i++) {
+          const opt = topbarSel.options[i];
+          if (opt.value && !properties.some(p => p.id === opt.value)) {
+            properties.push({ id: opt.value, name: opt.textContent.trim() });
           }
-        } catch (fetchErr) {
-          console.error('Error fetching owner properties for reports:', fetchErr);
         }
       }
     }
 
-    st = getState();
-    const properties = (st && st.properties) || [];
     const prevSelected = propSel.value;
     const defaultVal = prevSelected || (st && st.activeProperty ? st.activeProperty.id : '');
 
+    // Never permanently disable the property selector
+    propSel.disabled = false;
+
     if (properties.length === 0) {
-      propSel.disabled = true;
-      propSel.innerHTML = '<option value="">No Properties Found</option>';
+      propSel.innerHTML = '<option value="">— Select a property —</option>';
       const propHelper = document.getElementById('rptPropertyHelperText');
       if (propHelper) {
-        propHelper.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted);">No properties found for this account. Create a property first.</span>';
+        propHelper.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted);">No properties found yet. Click to reload.</span>';
       }
-      window.handleReportPropertyChange('');
       return;
     }
 
-    propSel.disabled = false;
     let propOptions = '<option value="">— Select a property —</option>';
     let foundSelected = false;
 
@@ -597,12 +618,14 @@
 
     const propHelper = document.getElementById('rptPropertyHelperText');
     if (propHelper) {
-      propHelper.innerHTML = `<span style="font-size:0.8rem;color:var(--text-secondary);">${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} loaded</span>`;
+      propHelper.innerHTML = `<span style="font-size:0.8rem;color:var(--text-secondary);">${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} available</span>`;
     }
 
-    // Automatically trigger cascading tenant update for selected property
+    // If a property was selected or default is available, trigger tenant loading
     const activeVal = foundSelected ? defaultVal : propSel.value;
-    window.handleReportPropertyChange(activeVal);
+    if (activeVal) {
+      window.handleReportPropertyChange(activeVal);
+    }
   };
 
   // ── UI: Handle Property Change (Cascading Tenant Dropdown) ──────────────────
@@ -642,40 +665,42 @@
     let st = getState();
 
     // If tenants array is empty, attempt direct Firestore fetch
-    if ((!st || !st.tenants || st.tenants.length === 0) && typeof window.fbDb !== 'undefined' && typeof window.fbAuth !== 'undefined') {
-      const currentUid = (st && st.currentUser && st.currentUser.uid) || (window.fbAuth.currentUser && window.fbAuth.currentUser.uid);
-      if (currentUid) {
-        try {
-          tenantSelect.disabled = true;
-          tenantSelect.innerHTML = '<option value="">Loading tenants...</option>';
-          const snapshot = await window.fbDb.collection('tenants')
-            .where('ownerId', '==', currentUid)
-            .get();
-          const fetchedTenants = snapshot.docs.map(doc => {
-            const d = doc.data();
-            return {
-              id: doc.id,
-              ...d,
-              ownerId: d.ownerId,
-              propertyId: d.propertyId,
-              unitId: d.unitId,
-              unitNumber: d.unitNumber || 'Unit',
-              name: d.name,
-              mobile: d.mobile || d.mobileNumber || '',
-              rent: d.monthlyRent !== undefined ? d.monthlyRent : (d.rent || 0),
-              status: d.status || 'active',
-              moveIn: d.moveInDate || d.moveIn,
-              moveOut: d.moveOutDate || d.moveOut || null,
-              initialMeter: d.initialMeterReading !== undefined ? d.initialMeterReading : (d.initialMeter || 0),
-              deposit: d.securityDeposit !== undefined ? d.securityDeposit : (d.deposit || 0),
-              advance: d.advanceAmount !== undefined ? d.advanceAmount : (d.advance || 0),
-              settlementNum: d.settlementNumber || d.settlementNum || null
-            };
-          });
-          if (st) st.tenants = fetchedTenants;
-        } catch (tErr) {
-          console.error('Error fetching tenants for reports:', tErr);
-        }
+    const db = window.fbDb || (typeof firebase !== 'undefined' && firebase.firestore ? firebase.firestore() : null);
+    const auth = window.fbAuth || (typeof firebase !== 'undefined' && firebase.auth ? firebase.auth() : null);
+    const currentUid = (st && st.currentUser && st.currentUser.uid) || (auth && auth.currentUser && auth.currentUser.uid);
+
+    if ((!st || !st.tenants || st.tenants.length === 0) && db && currentUid) {
+      try {
+        tenantSelect.disabled = true;
+        tenantSelect.innerHTML = '<option value="">Loading tenants...</option>';
+        const snapshot = await db.collection('tenants')
+          .where('ownerId', '==', currentUid)
+          .get();
+        const fetchedTenants = snapshot.docs.map(doc => {
+          const d = doc.data();
+          return {
+            id: doc.id,
+            ...d,
+            ownerId: d.ownerId,
+            propertyId: d.propertyId,
+            unitId: d.unitId,
+            unitNumber: d.unitNumber || 'Unit',
+            name: d.name,
+            mobile: d.mobile || d.mobileNumber || '',
+            rent: d.monthlyRent !== undefined ? d.monthlyRent : (d.rent || 0),
+            status: d.status || 'active',
+            moveIn: d.moveInDate || d.moveIn,
+            moveOut: d.moveOutDate || d.moveOut || null,
+            initialMeter: d.initialMeterReading !== undefined ? d.initialMeterReading : (d.initialMeter || 0),
+            deposit: d.securityDeposit !== undefined ? d.securityDeposit : (d.deposit || 0),
+            advance: d.advanceAmount !== undefined ? d.advanceAmount : (d.advance || 0),
+            settlementNum: d.settlementNumber || d.settlementNum || null
+          };
+        });
+        if (st) st.tenants = fetchedTenants;
+        if (window.state) window.state.tenants = fetchedTenants;
+      } catch (tErr) {
+        console.error('Error fetching tenants for reports:', tErr);
       }
     }
 
@@ -2198,8 +2223,13 @@
   // ── Testing / API Hook ─────────────────────────────────────────────────────
   window._testAssemble = assembleReportData;
 
-  // ── State bridge ───────────────────────────────────────────────────────────
+  // ── State bridge & Auto-Initializer ────────────────────────────────────────
   function installStateBridge() {
+    // Immediate render attempt
+    if (typeof window.renderReportsPanel === 'function') {
+      window.renderReportsPanel();
+    }
+
     const original = window.renderAllPortalData;
     if (typeof original === 'function') {
       window.renderAllPortalData = function () {
@@ -2207,9 +2237,8 @@
         if (window.__rentoraStateGetter) {
           window.__rentoraState = window.__rentoraStateGetter();
         }
-        const panel = document.getElementById('panel-reports');
-        if (panel && panel.classList.contains('active') && typeof renderReportTenantList === 'function') {
-          renderReportTenantList();
+        if (typeof window.renderReportsPanel === 'function') {
+          window.renderReportsPanel();
         }
       };
     } else {
@@ -2217,10 +2246,35 @@
     }
   }
 
+  function setupReportDropdownListeners() {
+    const propSel = document.getElementById('rptPropertySelect');
+    if (propSel && typeof propSel.addEventListener === 'function') {
+      propSel.addEventListener('focus', () => {
+        if (typeof window.renderReportsPanel === 'function') window.renderReportsPanel();
+      });
+      propSel.addEventListener('mousedown', () => {
+        if (typeof window.renderReportsPanel === 'function') window.renderReportsPanel();
+      });
+    }
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', installStateBridge);
+    document.addEventListener('DOMContentLoaded', () => {
+      installStateBridge();
+      setupReportDropdownListeners();
+    });
   } else {
     installStateBridge();
+    setupReportDropdownListeners();
+  }
+
+  // Also hook window load
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('load', () => {
+      if (typeof window.renderReportsPanel === 'function') {
+        window.renderReportsPanel();
+      }
+    });
   }
 
 })();

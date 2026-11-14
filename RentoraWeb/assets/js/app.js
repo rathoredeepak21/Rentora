@@ -30,6 +30,9 @@
       fbAuth = firebase.auth();
       fbDb = firebase.firestore();
       isFirebaseReady = true;
+      window.fbApp = fbApp;
+      window.fbAuth = fbAuth;
+      window.fbDb = fbDb;
       console.log('Rentora: Firebase connected successfully.');
     }
   } catch (err) {
@@ -258,8 +261,10 @@
   // 3. INITIALIZATION
   // ==========================================================================
   function init() {
+    window.state = state;
     window.__rentoraStateGetter = () => state;
     window.__rentoraState = state;
+    window.renderAllPortalData = renderAllPortalData;
     applyTheme(state.theme);
     setupEventListeners();
     initCalculator();
@@ -847,22 +852,48 @@
   // 7. PROPERTY MANAGEMENT (PHASE 3)
   // ==========================================================================
   function updatePropertyDropdown() {
+    // 1. Topbar switcher dropdown
     const select = document.getElementById('propertySelectDropdown');
-    if (!select) return;
-
-    if (state.properties.length === 0) {
-      select.innerHTML = `<option value="">No Properties Found</option>`;
-      select.disabled = true;
-      return;
+    if (select) {
+      if (state.properties.length === 0) {
+        select.innerHTML = `<option value="">No Properties Found</option>`;
+        select.disabled = true;
+      } else {
+        select.disabled = false;
+        select.innerHTML = state.properties.map(p => `
+          <option value="${p.id}" ${state.activeProperty && state.activeProperty.id === p.id ? 'selected' : ''}>
+            ${p.name} (${p.type || 'Property'})
+          </option>
+        `).join('');
+      }
     }
 
-    select.disabled = false;
-    select.innerHTML = state.properties.map(p => `
-      <option value="${p.id}" ${state.activeProperty && state.activeProperty.id === p.id ? 'selected' : ''}>
-        ${p.name} (${p.type || 'Property'})
-      </option>
-    `).join('');
+    // 2. Reports panel property dropdown (#rptPropertySelect)
+    const rptSelect = document.getElementById('rptPropertySelect');
+    if (rptSelect) {
+      if (state.properties.length === 0) {
+        rptSelect.innerHTML = `<option value="">— Select a property —</option>`;
+      } else {
+        const curVal = rptSelect.value || (state.activeProperty ? state.activeProperty.id : '');
+        let opts = '<option value="">— Select a property —</option>';
+        state.properties.forEach(p => {
+          opts += `<option value="${p.id}" ${p.id === curVal ? 'selected' : ''}>${p.name}${p.type ? ` (${p.type})` : ''}</option>`;
+        });
+        rptSelect.innerHTML = opts;
+        rptSelect.disabled = false;
+      }
+      const helper = document.getElementById('rptPropertyHelperText');
+      if (helper && state.properties.length > 0) {
+        helper.innerHTML = `<span style="font-size:0.8rem;color:var(--text-secondary);">${state.properties.length} propert${state.properties.length === 1 ? 'y' : 'ies'} loaded</span>`;
+      }
+    }
+
+    // Also notify Reports Engine if active
+    if (typeof window.renderReportsPanel === 'function') {
+      window.renderReportsPanel();
+    }
   }
+  window.updatePropertyDropdown = updatePropertyDropdown;
 
   window.handlePropertySwitch = function (propId) {
     const prop = state.properties.find(p => p.id === propId);
@@ -2962,10 +2993,12 @@
       populateSettingsForm();
     }
     // Expose live state to tenant-report.js via a state getter bridge
+    window.state = state;
     window.__rentoraStateGetter = () => state;
     window.__rentoraState = state;
-    if (state.dashboardTab === 'reports' && typeof renderReportsPanel === 'function') {
-      renderReportsPanel();
+    window.renderAllPortalData = renderAllPortalData;
+    if (typeof window.renderReportsPanel === 'function') {
+      window.renderReportsPanel();
     }
   }
 
