@@ -504,7 +504,7 @@
       stepLabel.textContent = type === 'active' ? '3. Select Active Tenant' : '3. Select Vacated Tenant';
     }
 
-    // Hide preview card and reset selection
+    // Reset selection and clear loaded report
     _currentReportTenantId = null;
     const reportCard = document.getElementById('rptTenantCard');
     if (reportCard) reportCard.style.display = 'none';
@@ -512,145 +512,278 @@
     const dateCard = document.getElementById('rptDateRangeCard');
     if (dateCard) dateCard.style.display = 'none';
 
-    // Re-render tenant list
-    window.renderReportTenantList();
+    const vacatedAction = document.getElementById('rptVacatedActionArea');
+    if (vacatedAction) vacatedAction.style.display = 'none';
+
+    const genBtn = document.getElementById('rptGenerateBtn');
+    if (genBtn) genBtn.disabled = true;
+
+    const vacatedBtn = document.getElementById('rptVacatedGenerateBtn');
+    if (vacatedBtn) vacatedBtn.disabled = true;
+
+    // Refresh tenant dropdown according to new report type
+    const propSel = document.getElementById('rptPropertySelect');
+    if (propSel && propSel.value) {
+      window.handleReportPropertyChange(propSel.value);
+    } else {
+      const tenantSelect = document.getElementById('rptTenantSelect');
+      if (tenantSelect) {
+        tenantSelect.disabled = true;
+        tenantSelect.innerHTML = '<option value="">— Select a property first —</option>';
+      }
+      const helper = document.getElementById('rptTenantHelperText');
+      if (helper) helper.innerHTML = '';
+    }
   };
 
-  // ── UI: Render Reports Panel ────────────────────────────────────────────────
-  window.renderReportsPanel = function () {
-    const st = getState();
-    if (!st) return;
-
+  // ── UI: Render Reports Panel & Populate Properties ─────────────────────────
+  window.renderReportsPanel = async function () {
     const propSel = document.getElementById('rptPropertySelect');
     if (!propSel) return;
 
-    // Populate property dropdown
-    const currentVal = propSel.value || (st.activeProperty ? st.activeProperty.id : '');
-    propSel.innerHTML = '<option value="">— Select a property —</option>';
-    (st.properties || []).forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.id;
-      opt.textContent = p.name;
-      if (p.id === currentVal) opt.selected = true;
-      propSel.appendChild(opt);
-    });
+    let st = getState();
 
-    window.renderReportTenantList();
-  };
+    // Check if properties are empty in state, but owner is authenticated in Firebase
+    if ((!st || !st.properties || st.properties.length === 0) && typeof window.fbDb !== 'undefined' && typeof window.fbAuth !== 'undefined') {
+      const currentUid = (st && st.currentUser && st.currentUser.uid) || (window.fbAuth.currentUser && window.fbAuth.currentUser.uid);
+      if (currentUid) {
+        try {
+          propSel.disabled = true;
+          propSel.innerHTML = '<option value="">Loading properties...</option>';
+          const snapshot = await window.fbDb.collection('properties')
+            .where('ownerId', '==', currentUid)
+            .get();
+          const fetched = snapshot.docs
+            .map(d => ({ id: d.id, ...d.data() }))
+            .filter(p => !p.isDeleted);
+          if (st) {
+            st.properties = fetched;
+            if (!st.activeProperty && fetched.length > 0) st.activeProperty = fetched[0];
+          }
+        } catch (fetchErr) {
+          console.error('Error fetching owner properties for reports:', fetchErr);
+        }
+      }
+    }
 
-  // ── UI: Render Tenant List ──────────────────────────────────────────────────
-  window.renderReportTenantList = function () {
-    const st = getState();
-    const area = document.getElementById('rptTenantListArea');
-    const reportCard = document.getElementById('rptTenantCard');
-    const dateCard = document.getElementById('rptDateRangeCard');
-    if (!area) return;
+    st = getState();
+    const properties = (st && st.properties) || [];
+    const prevSelected = propSel.value;
+    const defaultVal = prevSelected || (st && st.activeProperty ? st.activeProperty.id : '');
 
-    if (reportCard) reportCard.style.display = 'none';
-    if (dateCard) dateCard.style.display = 'none';
-
-    const propId = document.getElementById('rptPropertySelect')?.value || '';
-    if (!propId || !st) {
-      const noun = _currentReportType === 'active' ? 'active' : 'vacated';
-      area.innerHTML = `<p style="font-size:0.85rem;color:var(--text-muted);padding:12px 0;">Select a property above to see ${noun} tenants.</p>`;
+    if (properties.length === 0) {
+      propSel.disabled = true;
+      propSel.innerHTML = '<option value="">No Properties Found</option>';
+      const propHelper = document.getElementById('rptPropertyHelperText');
+      if (propHelper) {
+        propHelper.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted);">No properties found for this account. Create a property first.</span>';
+      }
+      window.handleReportPropertyChange('');
       return;
     }
 
-    const tenants = st.tenants || [];
-    let filtered = [];
+    propSel.disabled = false;
+    let propOptions = '<option value="">— Select a property —</option>';
+    let foundSelected = false;
 
-    if (_currentReportType === 'active') {
-      filtered = tenants.filter(t => t.propertyId === propId && t.status !== 'vacated');
-      if (filtered.length === 0) {
-        area.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted);padding:12px 0;">No active tenants found in this property.</p>';
-        return;
+    properties.forEach(p => {
+      const isSel = (p.id === defaultVal);
+      if (isSel) foundSelected = true;
+      const typeLabel = p.type ? ` (${p.type})` : '';
+      propOptions += `<option value="${p.id}" ${isSel ? 'selected' : ''}>${p.name}${typeLabel}</option>`;
+    });
+
+    propSel.innerHTML = propOptions;
+
+    const propHelper = document.getElementById('rptPropertyHelperText');
+    if (propHelper) {
+      propHelper.innerHTML = `<span style="font-size:0.8rem;color:var(--text-secondary);">${properties.length} propert${properties.length === 1 ? 'y' : 'ies'} loaded</span>`;
+    }
+
+    // Automatically trigger cascading tenant update for selected property
+    const activeVal = foundSelected ? defaultVal : propSel.value;
+    window.handleReportPropertyChange(activeVal);
+  };
+
+  // ── UI: Handle Property Change (Cascading Tenant Dropdown) ──────────────────
+  window.handleReportPropertyChange = async function (propertyId) {
+    _currentReportTenantId = null;
+
+    // Reset report cards & previews
+    const reportCard = document.getElementById('rptTenantCard');
+    if (reportCard) reportCard.style.display = 'none';
+
+    const dateCard = document.getElementById('rptDateRangeCard');
+    if (dateCard) dateCard.style.display = 'none';
+
+    const vacatedAction = document.getElementById('rptVacatedActionArea');
+    if (vacatedAction) vacatedAction.style.display = 'none';
+
+    const genBtn = document.getElementById('rptGenerateBtn');
+    if (genBtn) genBtn.disabled = true;
+
+    const vacatedBtn = document.getElementById('rptVacatedGenerateBtn');
+    if (vacatedBtn) vacatedBtn.disabled = true;
+
+    const tenantSelect = document.getElementById('rptTenantSelect');
+    const helper = document.getElementById('rptTenantHelperText');
+    const area = document.getElementById('rptTenantListArea');
+
+    if (!tenantSelect) return;
+
+    if (!propertyId) {
+      tenantSelect.disabled = true;
+      tenantSelect.innerHTML = '<option value="">— Select a property first —</option>';
+      if (helper) helper.innerHTML = '';
+      if (area) area.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted);padding:12px 0;">Select a property above to see tenants.</p>';
+      return;
+    }
+
+    let st = getState();
+
+    // If tenants array is empty, attempt direct Firestore fetch
+    if ((!st || !st.tenants || st.tenants.length === 0) && typeof window.fbDb !== 'undefined' && typeof window.fbAuth !== 'undefined') {
+      const currentUid = (st && st.currentUser && st.currentUser.uid) || (window.fbAuth.currentUser && window.fbAuth.currentUser.uid);
+      if (currentUid) {
+        try {
+          tenantSelect.disabled = true;
+          tenantSelect.innerHTML = '<option value="">Loading tenants...</option>';
+          const snapshot = await window.fbDb.collection('tenants')
+            .where('ownerId', '==', currentUid)
+            .get();
+          const fetchedTenants = snapshot.docs.map(doc => {
+            const d = doc.data();
+            return {
+              id: doc.id,
+              ...d,
+              ownerId: d.ownerId,
+              propertyId: d.propertyId,
+              unitId: d.unitId,
+              unitNumber: d.unitNumber || 'Unit',
+              name: d.name,
+              mobile: d.mobile || d.mobileNumber || '',
+              rent: d.monthlyRent !== undefined ? d.monthlyRent : (d.rent || 0),
+              status: d.status || 'active',
+              moveIn: d.moveInDate || d.moveIn,
+              moveOut: d.moveOutDate || d.moveOut || null,
+              initialMeter: d.initialMeterReading !== undefined ? d.initialMeterReading : (d.initialMeter || 0),
+              deposit: d.securityDeposit !== undefined ? d.securityDeposit : (d.deposit || 0),
+              advance: d.advanceAmount !== undefined ? d.advanceAmount : (d.advance || 0),
+              settlementNum: d.settlementNumber || d.settlementNum || null
+            };
+          });
+          if (st) st.tenants = fetchedTenants;
+        } catch (tErr) {
+          console.error('Error fetching tenants for reports:', tErr);
+        }
       }
+    }
 
-      let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
-      filtered.forEach(t => {
-        const isSelected = _currentReportTenantId === t.id;
-        const tenantBills = (st.bills || []).filter(b => b.tenantId === t.id);
-        const unpaidBills = tenantBills.filter(b => paymentStatusLabel(b) !== 'PAID');
-        const dueAmt = unpaidBills.reduce((s, b) => s + (Number(b.remainingAmount) || 0), 0);
+    st = getState();
+    const allTenants = (st && st.tenants) || [];
+    const propertyTenants = allTenants.filter(t => t.propertyId === propertyId);
 
-        html += `
-          <div class="rpt-tenant-row ${isSelected ? 'rpt-tenant-row--selected' : ''}" onclick="selectReportTenant('${t.id}')" data-tenant-id="${t.id}">
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
-                <strong style="color:var(--text-main);font-size:0.95rem;">${t.name}</strong>
-                <span style="font-size:0.82rem;color:var(--text-secondary);">— Unit ${t.unitNumber || '—'}</span>
-                <span class="rpt-badge rpt-badge--active">ACTIVE</span>
-              </div>
-              <div style="text-align:right;">
-                ${dueAmt > 0
-                  ? `<span style="font-size:0.8rem;color:#ef4444;font-weight:700;">Due: ₹${dueAmt.toLocaleString('en-IN')}</span>`
-                  : `<span style="font-size:0.8rem;color:#10b981;font-weight:600;">All Bills Cleared</span>`}
-              </div>
-            </div>
-            <div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;display:flex;gap:14px;flex-wrap:wrap;">
-              <span>Move-In: <strong style="color:var(--text-secondary);">${fmtDate(t.moveIn)}</strong></span>
-              <span>Rent: <strong style="color:var(--text-secondary);">${fmt(t.rent || t.monthlyRent)}/mo</strong></span>
-              ${Number(t.deposit || t.securityDeposit) > 0 ? `<span>Deposit: <strong style="color:var(--text-secondary);">${fmt(t.deposit || t.securityDeposit)}</strong></span>` : ''}
-              ${Number(t.advance || t.advanceAmount) > 0 ? `<span>Advance: <strong style="color:#10b981;">${fmt(t.advance || t.advanceAmount)}</strong></span>` : ''}
-              ${t.mobile ? `<span>Mobile: <strong style="color:var(--text-secondary);">${t.mobile}</strong></span>` : ''}
-            </div>
-          </div>`;
-      });
-      html += '</div>';
-      area.innerHTML = html;
+    const isVacatedReport = (_currentReportType === 'vacated');
+    const noun = isVacatedReport ? 'vacated' : 'active';
+    const matchingTenants = propertyTenants.filter(t => isVacatedReport ? t.status === 'vacated' : t.status !== 'vacated');
 
-    } else {
-      // Vacated tenants
-      filtered = tenants.filter(t => t.propertyId === propId && t.status === 'vacated');
-      if (filtered.length === 0) {
-        area.innerHTML = '<p style="font-size:0.85rem;color:var(--text-muted);padding:12px 0;">No vacated tenants found in this property.</p>';
-        return;
+    if (matchingTenants.length === 0) {
+      tenantSelect.disabled = true;
+      tenantSelect.innerHTML = `<option value="">No ${noun} tenants in this property</option>`;
+      if (helper) {
+        helper.innerHTML = `<p style="font-size:0.82rem;color:var(--text-muted);margin-top:6px;">No ${noun} tenants found for the selected property.</p>`;
       }
+      if (area) {
+        area.innerHTML = `<p style="font-size:0.85rem;color:var(--text-muted);padding:12px 0;">No ${noun} tenants found in this property.</p>`;
+      }
+      return;
+    }
 
-      let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
-      filtered.forEach(t => {
+    tenantSelect.disabled = false;
+    let options = `<option value="">— Select a ${noun} tenant (${matchingTenants.length} available) —</option>`;
+
+    matchingTenants.forEach(t => {
+      const unitLabel = t.unitNumber ? ` — Unit ${t.unitNumber}` : '';
+      if (!isVacatedReport) {
+        options += `<option value="${t.id}">${t.name}${unitLabel} [Active]</option>`;
+      } else {
         const settlement = (st.settlements || []).find(s => s.tenantId === t.id || (t.settlementNum && s.settlementNumber === t.settlementNum));
         const expiry = getExpiryInfo(settlement);
-        let badge = '';
-        let disabled = '';
+        let tag = '';
+        let disabledAttr = '';
         if (!expiry.hasSettlement) {
-          badge = `<span class="rpt-badge" style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #d97706;">No Settlement</span>`;
-          disabled = 'style="opacity:0.55;cursor:not-allowed;"';
+          tag = ' [No Settlement]';
+          disabledAttr = 'disabled';
         } else if (expiry.isExpired) {
-          badge = `<span class="rpt-badge" style="background:rgba(239,68,68,0.12);color:#ef4444;border:1px solid #ef4444;">Access Expired</span>`;
-          disabled = 'style="opacity:0.55;cursor:not-allowed;"';
+          tag = ' [Access Expired]';
+          disabledAttr = 'disabled';
         } else {
-          badge = `<span class="rpt-badge" style="background:rgba(16,185,129,0.12);color:#10b981;border:1px solid #10b981;">${formatRemaining(expiry.remaining)}</span>`;
+          tag = ` [${formatRemaining(expiry.remaining)}]`;
         }
-        const clickable = (!expiry.hasSettlement || expiry.isExpired) ? '' : `onclick="selectReportTenant('${t.id}')"`;
-        const isSelected = _currentReportTenantId === t.id;
+        options += `<option value="${t.id}" ${disabledAttr}>${t.name}${unitLabel}${tag}</option>`;
+      }
+    });
 
-        html += `
-          <div class="rpt-tenant-row ${isSelected ? 'rpt-tenant-row--selected' : ''}" ${clickable} ${disabled} data-tenant-id="${t.id}">
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
-                <strong style="color:var(--text-main);">${t.name}</strong>
-                <span style="font-size:0.82rem;color:var(--text-secondary);">— Unit ${t.unitNumber || '—'}</span>
-                <span class="rpt-badge rpt-badge--vacated">VACATED</span>
-                ${badge}
-              </div>
-            </div>
-            <div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;">
-              Moved in: ${fmtDate(t.moveIn)} &nbsp;|&nbsp; Vacated: ${fmtDate(t.moveOut)}
-              ${settlement ? ` &nbsp;|&nbsp; Settlement: <strong style="color:var(--text-secondary);">${settlement.settlementNumber}</strong>` : ''}
-            </div>
+    tenantSelect.innerHTML = options;
+
+    if (helper) {
+      helper.innerHTML = `<p style="font-size:0.82rem;color:var(--text-secondary);margin-top:6px;">${matchingTenants.length} ${noun} tenant${matchingTenants.length !== 1 ? 's' : ''} available. Select one to proceed.</p>`;
+    }
+
+    // Maintain backward-compatibility for rptTenantListArea if referenced anywhere
+    if (area) {
+      let legacyHtml = '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">';
+      matchingTenants.forEach(t => {
+        legacyHtml += `
+          <div class="rpt-tenant-row" onclick="selectReportTenant('${t.id}')" data-tenant-id="${t.id}">
+            <strong>${t.name}</strong> — Unit ${t.unitNumber || '—'}
           </div>`;
       });
-      html += '</div>';
-      area.innerHTML = html;
+      legacyHtml += '</div>';
+      area.innerHTML = legacyHtml;
     }
   };
 
-  // ── UI: Select Tenant ───────────────────────────────────────────────────────
-  window.selectReportTenant = function (tenantId) {
+  // ── UI: Handle Tenant Dropdown Change ───────────────────────────────────────
+  window.handleReportTenantSelectChange = function (tenantId) {
+    if (!tenantId) {
+      _currentReportTenantId = null;
+      const reportCard = document.getElementById('rptTenantCard');
+      if (reportCard) reportCard.style.display = 'none';
+
+      const dateCard = document.getElementById('rptDateRangeCard');
+      if (dateCard) dateCard.style.display = 'none';
+
+      const vacatedAction = document.getElementById('rptVacatedActionArea');
+      if (vacatedAction) vacatedAction.style.display = 'none';
+
+      const genBtn = document.getElementById('rptGenerateBtn');
+      if (genBtn) genBtn.disabled = true;
+
+      const vacatedBtn = document.getElementById('rptVacatedGenerateBtn');
+      if (vacatedBtn) vacatedBtn.disabled = true;
+
+      const helper = document.getElementById('rptTenantHelperText');
+      if (helper) helper.innerHTML = '';
+      return;
+    }
+
     _currentReportTenantId = tenantId;
 
-    // Highlight selected row in DOM
+    // Enable generate report buttons
+    const genBtn = document.getElementById('rptGenerateBtn');
+    if (genBtn) genBtn.disabled = false;
+
+    const vacatedBtn = document.getElementById('rptVacatedGenerateBtn');
+    if (vacatedBtn) vacatedBtn.disabled = false;
+
+    // Keep tenant select value in sync
+    const tenantSelect = document.getElementById('rptTenantSelect');
+    if (tenantSelect && tenantSelect.value !== tenantId) {
+      tenantSelect.value = tenantId;
+    }
+
+    // Highlight legacy row if present
     document.querySelectorAll('.rpt-tenant-row').forEach(el => {
       el.classList.toggle('rpt-tenant-row--selected', el.dataset.tenantId === tenantId);
     });
@@ -659,10 +792,36 @@
     const tenant = (st?.tenants || []).find(t => t.id === tenantId);
     if (!tenant) return;
 
+    // Render detailed tenant preview pill in helper area
+    const helper = document.getElementById('rptTenantHelperText');
+    if (helper) {
+      const isVacated = tenant.status === 'vacated';
+      helper.innerHTML = `
+        <div style="background:var(--bg-surface-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 14px;margin-top:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div>
+              <strong style="color:var(--text-main);font-size:0.95rem;">${tenant.name}</strong>
+              <span style="font-size:0.82rem;color:var(--text-secondary);margin-left:6px;">— Unit ${tenant.unitNumber || '—'}</span>
+            </div>
+            <div>
+              <span class="rpt-badge ${isVacated ? 'rpt-badge--vacated' : 'rpt-badge--active'}">${isVacated ? 'VACATED' : 'ACTIVE'}</span>
+            </div>
+          </div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;display:flex;gap:14px;flex-wrap:wrap;">
+            <span>Move-In: <strong style="color:var(--text-secondary);">${fmtDate(tenant.moveIn)}</strong></span>
+            ${tenant.moveOut ? `<span>Vacated: <strong style="color:var(--text-secondary);">${fmtDate(tenant.moveOut)}</strong></span>` : ''}
+            <span>Rent: <strong style="color:var(--text-secondary);">${fmt(tenant.rent || tenant.monthlyRent)}/mo</strong></span>
+            ${Number(tenant.deposit || tenant.securityDeposit) > 0 ? `<span>Deposit: <strong style="color:var(--text-secondary);">${fmt(tenant.deposit || tenant.securityDeposit)}</strong></span>` : ''}
+            ${Number(tenant.advance || tenant.advanceAmount) > 0 ? `<span>Advance: <strong style="color:#10b981;">${fmt(tenant.advance || tenant.advanceAmount)}</strong></span>` : ''}
+          </div>
+        </div>`;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
     const dateCard = document.getElementById('rptDateRangeCard');
+    const vacatedAction = document.getElementById('rptVacatedActionArea');
     const startInput = document.getElementById('rptStartDate');
     const endInput = document.getElementById('rptEndDate');
-    const todayStr = new Date().toISOString().split('T')[0];
 
     if (_currentReportType === 'active') {
       const moveInStr = tenant.moveIn || todayStr;
@@ -672,13 +831,26 @@
       if (startInput) startInput.value = moveInStr;
       if (endInput) endInput.value = todayStr;
       if (dateCard) dateCard.style.display = 'block';
+      if (vacatedAction) vacatedAction.style.display = 'none';
 
       updateDateRangeInfo();
       window.generateSelectedReport();
     } else {
       if (dateCard) dateCard.style.display = 'none';
+      if (vacatedAction) vacatedAction.style.display = 'block';
       window.generateSelectedReport();
     }
+  };
+
+  // Backward-compatibility alias
+  window.selectReportTenant = function (tenantId) {
+    window.handleReportTenantSelectChange(tenantId);
+  };
+
+  // Backward-compatibility alias
+  window.renderReportTenantList = function () {
+    const propId = document.getElementById('rptPropertySelect')?.value || '';
+    window.handleReportPropertyChange(propId);
   };
 
   // ── UI: Quick Date Range Selection ──────────────────────────────────────────

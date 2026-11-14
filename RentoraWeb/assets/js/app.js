@@ -258,6 +258,8 @@
   // 3. INITIALIZATION
   // ==========================================================================
   function init() {
+    window.__rentoraStateGetter = () => state;
+    window.__rentoraState = state;
     applyTheme(state.theme);
     setupEventListeners();
     initCalculator();
@@ -702,12 +704,13 @@
     toggleLoadingIndicator(true);
 
     try {
-      // 1. Real-time Properties Listener
+      // 1. Real-time Properties Listener (Loads ALL owner properties regardless of isDeleted presence)
       const unsubProperties = fbDb.collection('properties')
         .where('ownerId', '==', ownerId)
-        .where('isDeleted', '==', false)
         .onSnapshot(snapshot => {
-          state.properties = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          state.properties = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(p => !p.isDeleted);
 
           // Determine Active Property
           if (state.properties.length > 0) {
@@ -2961,6 +2964,9 @@
     // Expose live state to tenant-report.js via a state getter bridge
     window.__rentoraStateGetter = () => state;
     window.__rentoraState = state;
+    if (state.dashboardTab === 'reports' && typeof renderReportsPanel === 'function') {
+      renderReportsPanel();
+    }
   }
 
   function renderStats() {
