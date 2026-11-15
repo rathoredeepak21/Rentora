@@ -4317,6 +4317,7 @@
         ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
         tenantId: tenant ? tenant.id : '',
         tenantName: tenant ? tenant.name : 'Tenant',
+        tenantAuthUid: (tenant && tenant.tenantAuthUid) ? tenant.tenantAuthUid : null,
         propertyId: propId,
         propertyName: prop ? prop.name : 'Property',
         unitId,
@@ -4335,7 +4336,7 @@
         electricityBillType: eType,
         electricityFixedAmount: eType === 'fixed' ? elecCharge : 0,
         electricityRatePerUnit: elecRate,
-        meterReadingDays: elecDays,
+        meterReadingDays: elecDays !== null && elecDays !== undefined ? Number(elecDays) : 0,
         // Water
         waterCharge,
         waterBillType: wType,
@@ -4346,7 +4347,7 @@
         currentWaterMeterReading: currWaterReading,
         currentWaterMeterReadingDate: currWaterDate ? currWaterDate.split('T')[0] : '',
         waterUnits,
-        waterMeterReadingDays: calculateMeterDays(prevWaterDate, currWaterDate),
+        waterMeterReadingDays: calculateMeterDays(prevWaterDate, currWaterDate) || 0,
         // Other charges
         rent,
         parkingCharge: parking,
@@ -4367,53 +4368,24 @@
         updatedAt: new Date().toISOString()
       };
 
+      // Defensive check to avoid Firestore rejection on undefined
+      Object.keys(billData).forEach(k => {
+        if (billData[k] === undefined) billData[k] = null;
+      });
+
       if (state.currentUser && isFirebaseReady && fbDb) {
-        const batch = fbDb.batch();
-        const docRef = fbDb.collection('bills').doc();
-        billData.id = docRef.id;
-        batch.set(docRef, billData);
-
-        // Record Electricity Meter Reading Record
-        const elecReadingRef = fbDb.collection('meter_readings').doc();
-        batch.set(elecReadingRef, {
-          ownerId: billData.ownerId,
-          tenantId: billData.tenantId,
-          propertyId: billData.propertyId,
-          unitId: billData.unitId,
-          meterType: 'electricity',
-          previousReadingUnits: prevReading,
-          previousReadingDate: prevReadingDate,
-          readingUnits: currReading,
-          currentReadingUnits: currReading,
-          actualReadingDate: currReadingDate,
-          readingDays: elecDays,
-          relatedBillId: billData.id,
-          billingMonth,
-          createdAt: new Date().toISOString()
-        });
-
-        // Record Water Meter Reading Record if applicable
-        if (wType === 'perUnit' || currWaterReading > 0 || currWaterDate) {
-          const waterReadingRef = fbDb.collection('meter_readings').doc();
-          batch.set(waterReadingRef, {
-            ownerId: billData.ownerId,
-            tenantId: billData.tenantId,
-            propertyId: billData.propertyId,
-            unitId: billData.unitId,
-            meterType: 'water',
-            previousReadingUnits: prevWaterReading,
-            previousReadingDate: prevWaterDate,
-            readingUnits: currWaterReading,
-            currentReadingUnits: currWaterReading,
-            actualReadingDate: currWaterDate || currReadingDate,
-            readingDays: calculateMeterDays(prevWaterDate, currWaterDate || currReadingDate),
-            relatedBillId: billData.id,
-            billingMonth,
-            createdAt: new Date().toISOString()
-          });
+        try {
+          const docRef = await fbDb.collection('bills').add(billData);
+          billData.id = docRef.id;
+        } catch (dbErr) {
+          console.error('Failed to create bill:', dbErr);
+          showToast(`Failed to create bill: ${dbErr.message}`, 'error');
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Generate & Save Bill';
+          }
+          return;
         }
-
-        await batch.commit();
       } else {
         billData.id = 'bill_' + Date.now();
       }
