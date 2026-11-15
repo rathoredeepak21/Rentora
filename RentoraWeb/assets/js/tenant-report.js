@@ -2550,6 +2550,125 @@
     }
   };
 
+  // ── Smart Content-Aware PDF Paginator ──────────────────────────────────────
+  function buildContentAwarePages(pageBudget, miniHeaderFn) {
+    const pages = [[]];
+    let currentY = 0;
+
+    function newPage() {
+      pages.push([]);
+      currentY = 0;
+    }
+
+    function addBlock(height, html) {
+      if (!html) return;
+      if (currentY > 0 && (currentY + height > pageBudget)) {
+        newPage();
+      }
+      pages[pages.length - 1].push(html);
+      currentY += height;
+    }
+
+    function addTable(config) {
+      const {
+        titleHtml,
+        tableHeaderHtml,
+        colgroupHtml = '',
+        rows = [],
+        renderRow,
+        footerHtml = '',
+        titleHeight = 24,
+        headerHeight = 22,
+        rowHeight = 18,
+        footerHeight = 20,
+        emptyHtml = ''
+      } = config;
+
+      if (!rows || rows.length === 0) {
+        if (emptyHtml) {
+          addBlock(titleHeight + 35, `<div>${titleHtml}${emptyHtml}</div>`);
+        }
+        return;
+      }
+
+      let remainingRows = [...rows];
+      let chunkIdx = 0;
+
+      while (remainingRows.length > 0) {
+        const isFirstChunk = chunkIdx === 0;
+        const availSpace = pageBudget - currentY;
+        const overhead = titleHeight + headerHeight + (isFirstChunk ? 0 : 28);
+        const minRowsNeeded = 2;
+        const minNeededForChunk = overhead + (minRowsNeeded * rowHeight);
+
+        // If not enough room on this page for overhead + min rows, start new page
+        if (currentY > 0 && availSpace < minNeededForChunk) {
+          newPage();
+        }
+
+        const availForThisPage = pageBudget - currentY;
+        const currentOverhead = titleHeight + headerHeight + (pages.length > 1 && currentY === 0 ? 28 : 0);
+
+        let maxRowsCanFit = Math.floor((availForThisPage - currentOverhead - (remainingRows.length <= 15 ? footerHeight : 0)) / rowHeight);
+        if (maxRowsCanFit < 1) maxRowsCanFit = 1;
+
+        const chunkRows = remainingRows.slice(0, maxRowsCanFit);
+        remainingRows = remainingRows.slice(maxRowsCanFit);
+        const isLastChunk = remainingRows.length === 0;
+
+        let chunkBodyHtml = '';
+        chunkRows.forEach((r, idx) => {
+          chunkBodyHtml += renderRow(r, chunkIdx * maxRowsCanFit + idx, chunkIdx);
+        });
+
+        const rawTitleText = titleHtml.replace(/<[^>]*>/g, '').trim();
+        const chunkTitle = isFirstChunk
+          ? titleHtml
+          : `<div class="pdf-section-title">${rawTitleText} &nbsp;—&nbsp; Continued (Page ${pages.length})</div>`;
+
+        const chunkFooter = (isLastChunk && footerHtml) ? footerHtml : '';
+
+        const tableHtml = `
+          <div>
+            ${chunkTitle}
+            <table class="pdf-table">
+              ${colgroupHtml}
+              <thead>${tableHeaderHtml}</thead>
+              <tbody>${chunkBodyHtml}</tbody>
+              ${chunkFooter}
+            </table>
+          </div>
+        `;
+
+        pages[pages.length - 1].push(tableHtml);
+        const chunkHeight = currentOverhead + (chunkRows.length * rowHeight) + (isLastChunk ? footerHeight : 0);
+        currentY += chunkHeight;
+        chunkIdx++;
+
+        if (remainingRows.length > 0) {
+          newPage();
+        }
+      }
+    }
+
+    function compileHtml() {
+      let fullHtml = '';
+      pages.forEach((pageBlocks, pageIdx) => {
+        if (pageBlocks.length === 0) return;
+        if (pageIdx > 0) {
+          fullHtml += `<div class="pdf-page-break"></div>\n`;
+          if (typeof miniHeaderFn === 'function') {
+            fullHtml += miniHeaderFn(pageIdx + 1) + '\n';
+          }
+        }
+        fullHtml += pageBlocks.join('\n') + '\n';
+      });
+      return fullHtml;
+    }
+
+    return { addBlock, addTable, compileHtml, getPageCount: () => pages.length };
+  }
+
   // ── Property PDF Generation ─────────────────────────────────────────────────
   window.downloadPropertyPDF = async function () {
     const data = assemblePropertyReportData(_currentReportPropertyId, _currentPropMonth, _currentPropStartDate, _currentPropEndDate);
@@ -2583,14 +2702,16 @@
         background: #ffffff !important;
         width: 1040px !important;
         max-width: 1040px !important;
-        margin: 0 auto !important;
-        padding: 4px 8px !important;
+        margin: 0 !important;
+        padding: 4px 6px !important;
         box-sizing: border-box !important;
       }
       .pdf-header {
         border-bottom: 2px solid #4F46E5 !important;
         padding-bottom: 8px !important;
         margin-bottom: 10px !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       .pdf-header-table {
         width: 100% !important;
@@ -2602,12 +2723,13 @@
         vertical-align: top !important;
       }
       .pdf-mini-header {
-        display: flex !important;
-        justify-content: space-between !important;
-        align-items: center !important;
+        width: 100% !important;
         border-bottom: 1.5px solid #4F46E5 !important;
         padding-bottom: 4px !important;
         margin-bottom: 8px !important;
+        box-sizing: border-box !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       .pdf-title {
         font-size: 15px !important;
@@ -2642,12 +2764,16 @@
         border-left: 3px solid #4F46E5 !important;
         padding-left: 6px !important;
         margin: 10px 0 6px 0 !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
       }
       .pdf-grid-table {
         width: 100% !important;
         border-collapse: collapse !important;
         margin-bottom: 10px !important;
         border: 1px solid #d1d5db !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       .pdf-grid-table th, .pdf-grid-table td {
         border: 1px solid #d1d5db !important;
@@ -2671,6 +2797,14 @@
         margin-bottom: 8px !important;
         font-size: 8px !important;
         table-layout: fixed !important;
+        page-break-inside: auto !important;
+        break-inside: auto !important;
+      }
+      .pdf-table thead {
+        display: table-header-group !important;
+      }
+      .pdf-table tfoot {
+        display: table-footer-group !important;
       }
       .pdf-table th {
         background: #1e1b4b !important;
@@ -2692,15 +2826,22 @@
         word-wrap: break-word !important;
         overflow-wrap: break-word !important;
       }
+      .pdf-table tr {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
       .pdf-table tr:nth-child(even) td {
         background: #f9fafb !important;
       }
       .pdf-page-break {
         page-break-before: always !important;
         break-before: page !important;
+        clear: both !important;
+        display: block !important;
         height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
+        border: none !important;
       }
       .badge-paid {
         background: #dcfce7 !important;
@@ -2728,20 +2869,32 @@
       }
     `;
 
-    function chunkRows(rows, size) {
-      const chunks = [];
-      for (let i = 0; i < rows.length; i += size) {
-        chunks.push(rows.slice(i, i + size));
-      }
-      return chunks;
+    function miniHeader(pageNo) {
+      return `
+        <div class="pdf-mini-header">
+          <table style="width:100%;border-collapse:collapse;border:none;">
+            <tr>
+              <td style="text-align:left;border:none;padding:0;">
+                <span style="font-weight:800;color:#1e1b4b;font-size:10px;">RENTORA &bull; ${propertyNames}</span>
+                <span style="font-size:8px;color:#6b7280;">&nbsp;|&nbsp; Landlord: ${ownerName}</span>
+              </td>
+              <td style="text-align:right;border:none;padding:0;font-size:8px;color:#4b5563;">
+                Period: <strong>${periodLabel}</strong> &bull; <span style="color:#4338ca;">Page ${pageNo}</span>
+              </td>
+            </tr>
+          </table>
+        </div>
+      `;
     }
 
     const safeName = String(propertyNames).replace(/[^a-zA-Z0-9_-]/g, '_');
     const safeMonth = String(periodLabel).replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `Rentora_PropertyReport_${safeName}_${safeMonth}.pdf`;
 
-    // ── PAGE 1: Header, Property Details, Occupancy & Financial Summary ──
-    const page1Html = `
+    const paginator = buildContentAwarePages(680, miniHeader);
+
+    // ── Block 1: Main Header, Executive Overview & Occupancy Statistics ──
+    const headerAndExecutiveHtml = `
       <div class="pdf-header">
         <table class="pdf-header-table">
           <tr>
@@ -2819,46 +2972,46 @@
           <td><strong>${fin.paidBillsCount} Paid &bull; ${fin.partialBillsCount} Partial &bull; ${fin.unpaidBillsCount} Unpaid</strong></td>
         </tr>
       </table>
-
-      <div class="pdf-section-title">3. Collections by Revenue Component</div>
-      <table class="pdf-table">
-        <colgroup>
-          <col style="width:35%;">
-          <col style="width:35%;">
-          <col style="width:30%;">
-        </colgroup>
-        <thead><tr><th>Category</th><th>Amount Collected</th><th>Share of Total</th></tr></thead>
-        <tbody>
-          <tr><td>Rent Collections</td><td style="font-weight:700;color:#15803d;">${fmt(fin.collRent)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collRent / fin.collTotal) * 100) : 0}%</td></tr>
-          <tr><td>Electricity Collections</td><td style="font-weight:600;">${fmt(fin.collElec)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collElec / fin.collTotal) * 100) : 0}%</td></tr>
-          <tr><td>Water Collections</td><td style="font-weight:600;">${fmt(fin.collWater)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collWater / fin.collTotal) * 100) : 0}%</td></tr>
-          <tr><td>Parking Charges</td><td style="font-weight:600;">${fmt(fin.collParking)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collParking / fin.collTotal) * 100) : 0}%</td></tr>
-          <tr><td>Maintenance Collections</td><td style="font-weight:600;">${fmt(fin.collMaint)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collMaint / fin.collTotal) * 100) : 0}%</td></tr>
-          <tr><td>Other Charges</td><td style="font-weight:600;">${fmt(fin.collOther)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collOther / fin.collTotal) * 100) : 0}%</td></tr>
-          <tr><td>Previous Dues Cleared</td><td style="font-weight:600;">${fmt(fin.collPrevDue)}</td><td>${fin.collTotal > 0 ? Math.round((fin.collPrevDue / fin.collTotal) * 100) : 0}%</td></tr>
-          <tr style="font-weight:800;background:#f3f4f6;"><td>Total Received Ledger</td><td style="color:#15803d;font-size:9.5px;">${fmt(fin.collTotal)}</td><td>100%</td></tr>
-        </tbody>
-      </table>
     `;
+    paginator.addBlock(240, headerAndExecutiveHtml);
 
-    // ── PAGE 2: Unit & Tenant Roster ──
-    let page2Html = `
-      <div class="html2pdf__page-break pdf-page-break"></div>
-      <div class="pdf-mini-header">
-        <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Unit &amp; Tenant Roster</span>
-        <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
-      </div>
-      <div class="pdf-section-title">4. Property Units &amp; Occupancy Roster</div>
-    `;
+    // ── Table 3: Collections by Revenue Component ──
+    const collRows = [
+      { name: 'Rent Collections', amt: fin.collRent, isStrong: true },
+      { name: 'Electricity Collections', amt: fin.collElec },
+      { name: 'Water Collections', amt: fin.collWater },
+      { name: 'Parking Charges', amt: fin.collParking },
+      { name: 'Maintenance Collections', amt: fin.collMaint },
+      { name: 'Other Charges', amt: fin.collOther },
+      { name: 'Previous Dues Cleared', amt: fin.collPrevDue }
+    ];
+    paginator.addTable({
+      titleHtml: '<div class="pdf-section-title">3. Collections by Revenue Component</div>',
+      tableHeaderHtml: '<tr><th>Category</th><th>Amount Collected</th><th>Share of Total</th></tr>',
+      colgroupHtml: '<colgroup><col style="width:40%;"><col style="width:35%;"><col style="width:25%;"></colgroup>',
+      rows: collRows,
+      renderRow: (c) => `<tr>
+        <td>${c.name}</td>
+        <td style="${c.isStrong ? 'font-weight:700;color:#15803d;' : 'font-weight:600;'}">${fmt(c.amt)}</td>
+        <td>${fin.collTotal > 0 ? Math.round((c.amt / fin.collTotal) * 100) : 0}%</td>
+      </tr>`,
+      footerHtml: `<tfoot><tr style="font-weight:800;background:#f3f4f6;"><td>Total Received Ledger</td><td style="color:#15803d;font-size:9.5px;">${fmt(fin.collTotal)}</td><td>100%</td></tr></tfoot>`,
+      titleHeight: 22,
+      headerHeight: 20,
+      rowHeight: 18,
+      footerHeight: 20
+    });
 
-    if (units.length === 0) {
-      page2Html += `<p style="font-size:8.5px;color:#6b7280;padding:12px 0;">No units configured for this property.</p>`;
-    } else {
-      let unitRows = '';
-      units.forEach((u, i) => {
+    // ── Table 4: Property Units & Occupancy Roster ──
+    paginator.addTable({
+      titleHtml: `<div class="pdf-section-title">4. Property Units &amp; Occupancy Roster (${units.length} units)</div>`,
+      tableHeaderHtml: '<tr><th>#</th><th>Unit No</th><th>Floor / Type</th><th>Status</th><th>Current Tenant</th><th>Mobile</th><th>Monthly Rent</th><th>Move-in</th></tr>',
+      colgroupHtml: '<colgroup><col style="width:4%;"><col style="width:12%;"><col style="width:14%;"><col style="width:12%;"><col style="width:20%;"><col style="width:14%;"><col style="width:12%;"><col style="width:12%;"></colgroup>',
+      rows: units,
+      renderRow: (u, i) => {
         const tenant = tenants.find(t => t.unitId === u.id || t.unitNumber === u.unitNumber);
         const isOccupied = u.status === 'occupied' || Boolean(tenant);
-        unitRows += `<tr>
+        return `<tr>
           <td>${i + 1}</td>
           <td><strong>${u.unitNumber || 'Unit'}</strong></td>
           <td>${u.floor || '—'} / ${u.type || 'Standard'}</td>
@@ -2868,270 +3021,164 @@
           <td>${tenant ? fmt(tenant.rent || tenant.monthlyRent) : fmt(u.rent || u.monthlyRent)}</td>
           <td>${tenant ? fmtDate(tenant.moveIn || tenant.moveInDate) : '—'}</td>
         </tr>`;
-      });
-      page2Html += `
-        <table class="pdf-table">
-          <colgroup>
-            <col style="width:4%;">
-            <col style="width:12%;">
-            <col style="width:14%;">
-            <col style="width:12%;">
-            <col style="width:20%;">
-            <col style="width:14%;">
-            <col style="width:12%;">
-            <col style="width:12%;">
-          </colgroup>
-          <thead><tr><th>#</th><th>Unit No</th><th>Floor / Type</th><th>Status</th><th>Current Tenant</th><th>Mobile</th><th>Monthly Rent</th><th>Move-in</th></tr></thead>
-          <tbody>${unitRows}</tbody>
-        </table>
-      `;
-    }
-
-    // ── PAGE 3+: Bills History (Chunked) ──
-    let page3Html = '';
-    if (bills.length === 0) {
-      page3Html = `
-        <div class="html2pdf__page-break pdf-page-break"></div>
-        <div class="pdf-mini-header">
-          <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Billing History</span>
-          <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
-        </div>
-        <div class="pdf-section-title">5. Billing History in Period</div>
-        <p style="font-size:8.5px;color:#6b7280;padding:12px 0;">No bills generated for the selected property in this period.</p>
-      `;
-    } else {
-      const billChunks = chunkRows(bills, 14);
-      billChunks.forEach((chunk, chunkIdx) => {
-        let rows = '';
-        chunk.forEach((b, i) => {
-          const tenant = tenants.find(t => t.id === b.tenantId);
-          const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
-          const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
-          const stLabel = paymentStatusLabel(b);
-          const badgeClass = stLabel === 'PAID' ? 'badge-paid' : stLabel === 'PARTIALLY PAID' ? 'badge-partial' : 'badge-unpaid';
-          rows += `<tr>
-            <td>${chunkIdx * 14 + i + 1}</td>
-            <td><strong>${b.billNumber || '—'}</strong></td>
-            <td>${tenantName}</td>
-            <td>${unitNo}</td>
-            <td>${formatMonthReadable(b.billingMonth)}</td>
-            <td>${fmtDate(b.dueDate || getBillDate(b))}</td>
-            <td>${fmt(b.rent)}</td>
-            <td>${fmt(b.electricityCharge)}</td>
-            <td>${fmt(b.waterCharge)}</td>
-            <td style="font-weight:700;">${fmt(b.totalAmount)}</td>
-            <td style="color:#15803d;font-weight:700;">${fmt(b.paidAmount)}</td>
-            <td style="color:${Number(b.remainingAmount) > 0 ? '#b91c1c' : '#15803d'};font-weight:700;">${fmt(b.remainingAmount)}</td>
-            <td><span class="${badgeClass}">${stLabel}</span></td>
-          </tr>`;
-        });
-
-        const continuationLabel = chunkIdx > 0 ? ` &mdash; Continued (Page ${chunkIdx + 1})` : '';
-        page3Html += `
-          <div class="html2pdf__page-break pdf-page-break"></div>
-          <div class="pdf-mini-header">
-            <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Billing History${continuationLabel}</span>
-            <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
-          </div>
-          <div class="pdf-section-title">5. Billing History in Period${continuationLabel}</div>
-          <table class="pdf-table">
-            <colgroup>
-              <col style="width:3%;">
-              <col style="width:11%;">
-              <col style="width:13%;">
-              <col style="width:7%;">
-              <col style="width:8%;">
-              <col style="width:8%;">
-              <col style="width:9%;">
-              <col style="width:8%;">
-              <col style="width:7%;">
-              <col style="width:9%;">
-              <col style="width:8%;">
-              <col style="width:9%;">
-            </colgroup>
-            <thead><tr><th>#</th><th>Bill No.</th><th>Tenant</th><th>Unit</th><th>Month</th><th>Due Date</th><th>Rent</th><th>Electricity</th><th>Water</th><th>Total</th><th>Paid</th><th>Due</th><th>Status</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        `;
-      });
-    }
-
-    // ── PAGE 4+: Daily Collections / Payments Received (Chunked) ──
-    let page4Html = '';
-    if (payments.length === 0) {
-      page4Html = `
-        <div class="html2pdf__page-break pdf-page-break"></div>
-        <div class="pdf-mini-header">
-          <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Collections &amp; Payments</span>
-          <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
-        </div>
-        <div class="pdf-section-title">6. Actual Money Collections in Period</div>
-        <p style="font-size:8.5px;color:#6b7280;padding:12px 0;">No payments recorded in this period.</p>
-      `;
-    } else {
-      const paymentChunks = chunkRows(payments, 14);
-      paymentChunks.forEach((chunk, chunkIdx) => {
-        let rows = '';
-        chunk.forEach((p, i) => {
-          const tenant = tenants.find(t => t.id === p.tenantId);
-          const tenantName = tenant ? tenant.name : (p.tenantName || 'Tenant');
-          let billInfo = '—';
-          if (Array.isArray(p.allocations) && p.allocations.length > 0) {
-            billInfo = p.allocations.map(a => `${a.type === 'advance' ? 'Advance' : 'Bill'} (₹${a.amount})`).join(', ');
-          } else if (p.billId) {
-            billInfo = p.billId === 'advance' ? 'Advance Payment' : 'Direct Bill Payment';
-          }
-          rows += `<tr>
-            <td>${chunkIdx * 14 + i + 1}</td>
-            <td>${fmtDate(getPaymentDate(p))}</td>
-            <td><strong>${tenantName}</strong></td>
-            <td>${billInfo}</td>
-            <td style="font-weight:700;color:#15803d;">${fmt(p.amount || p.amountPaid)}</td>
-            <td>${paymentMethodLabel(p.paymentMethod || p.mode)}</td>
-            <td style="font-family:monospace;font-size:7px;">${p.transactionId || p.referenceId || '—'}</td>
-            <td><span class="badge-paid">${(p.status || 'approved').toUpperCase()}</span></td>
-          </tr>`;
-        });
-
-        const continuationLabel = chunkIdx > 0 ? ` &mdash; Continued (Page ${chunkIdx + 1})` : '';
-        page4Html += `
-          <div class="html2pdf__page-break pdf-page-break"></div>
-          <div class="pdf-mini-header">
-            <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Collections Ledger${continuationLabel}</span>
-            <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
-          </div>
-          <div class="pdf-section-title">6. Actual Money Collections in Period${continuationLabel}</div>
-          <table class="pdf-table">
-            <colgroup>
-              <col style="width:4%;">
-              <col style="width:11%;">
-              <col style="width:16%;">
-              <col style="width:23%;">
-              <col style="width:12%;">
-              <col style="width:11%;">
-              <col style="width:13%;">
-              <col style="width:10%;">
-            </colgroup>
-            <thead><tr><th>#</th><th>Payment Date</th><th>Tenant</th><th>Payment Received Against</th><th>Amount</th><th>Method</th><th>Txn / Ref ID</th><th>Status</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        `;
-      });
-    }
-
-    // ── PAGE 5: Utilities & Outstanding Dues ──
-    let utilityRows = '';
-    bills.forEach((b, i) => {
-      const tenant = tenants.find(t => t.id === b.tenantId);
-      const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
-      const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
-      const eDates = getMeterReadingDates(b, bills, tenant);
-      utilityRows += `<tr>
-        <td>${i + 1}</td>
-        <td><strong>${tenantName}</strong> (Unit ${unitNo})</td>
-        <td>Electricity</td>
-        <td>${b.previousMeterReading != null ? b.previousMeterReading : '—'}</td>
-        <td>${formatDDMMYYYY(eDates.prevDate) || '—'}</td>
-        <td>${b.currentMeterReading != null ? b.currentMeterReading : '—'}</td>
-        <td>${formatDDMMYYYY(eDates.currDate) || '—'}</td>
-        <td style="font-weight:600;">${b.electricityUnits || 0} u</td>
-        <td>${b.electricityRate ? `₹${b.electricityRate}/u` : (b.electricityFixedAmount ? `Fixed ₹${b.electricityFixedAmount}` : '—')}</td>
-        <td style="font-weight:700;color:#1e1b4b;">${fmt(b.electricityCharge)}</td>
-      </tr>`;
+      },
+      emptyHtml: '<p style="font-size:8.5px;color:#6b7280;padding:8px 0;">No units configured for this property.</p>',
+      titleHeight: 22,
+      headerHeight: 20,
+      rowHeight: 18
     });
 
-    let duesRows = '';
-    outstandingBills.forEach((b, i) => {
-      const tenant = tenants.find(t => t.id === b.tenantId);
-      const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
-      const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
-      const overdue = getDaysOverdue(b.dueDate);
-      duesRows += `<tr>
-        <td>${i + 1}</td>
-        <td><strong>${tenantName}</strong></td>
-        <td>Unit ${unitNo}</td>
-        <td>${b.billNumber || '—'}</td>
-        <td>${formatMonthReadable(b.billingMonth)}</td>
-        <td>${fmtDate(b.dueDate)}</td>
-        <td style="color:${overdue > 0 ? '#b91c1c' : '#4b5563'};font-weight:600;">${overdue > 0 ? `${overdue} days` : 'Current'}</td>
-        <td>${fmt(b.totalAmount)}</td>
-        <td style="color:#15803d;">${fmt(b.paidAmount)}</td>
-        <td style="color:#b91c1c;font-weight:700;">${fmt(b.remainingAmount)}</td>
-      </tr>`;
+    // ── Table 5: Billing History in Period ──
+    paginator.addTable({
+      titleHtml: `<div class="pdf-section-title">5. Billing History in Period (${bills.length} bills)</div>`,
+      tableHeaderHtml: '<tr><th>#</th><th>Bill No.</th><th>Tenant</th><th>Unit</th><th>Month</th><th>Due Date</th><th>Rent</th><th>Electricity</th><th>Water</th><th>Total</th><th>Paid</th><th>Due</th><th>Status</th></tr>',
+      colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:11%;"><col style="width:13%;"><col style="width:7%;"><col style="width:8%;"><col style="width:8%;"><col style="width:9%;"><col style="width:8%;"><col style="width:7%;"><col style="width:9%;"><col style="width:8%;"><col style="width:9%;"></colgroup>',
+      rows: bills,
+      renderRow: (b, i) => {
+        const tenant = tenants.find(t => t.id === b.tenantId);
+        const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+        const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+        const stLabel = paymentStatusLabel(b);
+        const badgeClass = stLabel === 'PAID' ? 'badge-paid' : stLabel === 'PARTIALLY PAID' ? 'badge-partial' : 'badge-unpaid';
+        return `<tr>
+          <td>${i + 1}</td>
+          <td><strong>${b.billNumber || '—'}</strong></td>
+          <td>${tenantName}</td>
+          <td>${unitNo}</td>
+          <td>${formatMonthReadable(b.billingMonth)}</td>
+          <td>${fmtDate(b.dueDate || getBillDate(b))}</td>
+          <td>${fmt(b.rent)}</td>
+          <td>${fmt(b.electricityCharge)}</td>
+          <td>${fmt(b.waterCharge)}</td>
+          <td style="font-weight:700;">${fmt(b.totalAmount)}</td>
+          <td style="color:#15803d;font-weight:700;">${fmt(b.paidAmount)}</td>
+          <td style="color:${Number(b.remainingAmount) > 0 ? '#b91c1c' : '#15803d'};font-weight:700;">${fmt(b.remainingAmount)}</td>
+          <td><span class="${badgeClass}">${stLabel}</span></td>
+        </tr>`;
+      },
+      emptyHtml: '<p style="font-size:8.5px;color:#6b7280;padding:8px 0;">No bills generated for the selected property in this period.</p>',
+      titleHeight: 22,
+      headerHeight: 20,
+      rowHeight: 18
     });
 
-    const page5Html = `
-      <div class="html2pdf__page-break pdf-page-break"></div>
-      <div class="pdf-mini-header">
-        <span style="font-weight:700;color:#1e1b4b;font-size:9.5px;">RENTORA &mdash; ${propertyNames} &bull; Utilities &amp; Outstanding Dues</span>
-        <span style="font-size:8px;color:#6b7280;">Period: ${periodLabel}</span>
-      </div>
+    // ── Table 6: Actual Money Collections in Period ──
+    paginator.addTable({
+      titleHtml: `<div class="pdf-section-title">6. Actual Money Collections in Period (${payments.length} transaction${payments.length !== 1 ? 's' : ''})</div>`,
+      tableHeaderHtml: '<tr><th>#</th><th>Payment Date</th><th>Tenant</th><th>Payment Received Against</th><th>Amount</th><th>Method</th><th>Txn / Ref ID</th><th>Status</th></tr>',
+      colgroupHtml: '<colgroup><col style="width:4%;"><col style="width:11%;"><col style="width:16%;"><col style="width:23%;"><col style="width:12%;"><col style="width:11%;"><col style="width:13%;"><col style="width:10%;"></colgroup>',
+      rows: payments,
+      renderRow: (p, i) => {
+        const tenant = tenants.find(t => t.id === p.tenantId);
+        const tenantName = tenant ? tenant.name : (p.tenantName || 'Tenant');
+        let billInfo = '—';
+        if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+          billInfo = p.allocations.map(a => `${a.type === 'advance' ? 'Advance' : 'Bill'} (₹${a.amount})`).join(', ');
+        } else if (p.billId) {
+          billInfo = p.billId === 'advance' ? 'Advance Payment' : 'Direct Bill Payment';
+        }
+        return `<tr>
+          <td>${i + 1}</td>
+          <td>${fmtDate(getPaymentDate(p))}</td>
+          <td><strong>${tenantName}</strong></td>
+          <td>${billInfo}</td>
+          <td style="font-weight:700;color:#15803d;">${fmt(p.amount || p.amountPaid)}</td>
+          <td>${paymentMethodLabel(p.paymentMethod || p.mode)}</td>
+          <td style="font-family:monospace;font-size:7px;">${p.transactionId || p.referenceId || '—'}</td>
+          <td><span class="badge-paid">${(p.status || 'approved').toUpperCase()}</span></td>
+        </tr>`;
+      },
+      emptyHtml: '<p style="font-size:8.5px;color:#6b7280;padding:8px 0;">No payments recorded in this period.</p>',
+      titleHeight: 22,
+      headerHeight: 20,
+      rowHeight: 18
+    });
 
-      <div class="pdf-section-title">7. Electricity &amp; Utility Consumption Breakdown</div>
-      <table class="pdf-table">
-        <colgroup>
-          <col style="width:3%;">
-          <col style="width:18%;">
-          <col style="width:9%;">
-          <col style="width:10%;">
-          <col style="width:10%;">
-          <col style="width:10%;">
-          <col style="width:10%;">
-          <col style="width:9%;">
-          <col style="width:10%;">
-          <col style="width:11%;">
-        </colgroup>
-        <thead><tr><th>#</th><th>Tenant &amp; Unit</th><th>Utility</th><th>Prev Reading</th><th>Prev Date</th><th>Curr Reading</th><th>Curr Date</th><th>Units</th><th>Rate / Plan</th><th>Total Charge</th></tr></thead>
-        <tbody>${utilityRows || '<tr><td colspan="10" style="text-align:center;color:#6b7280;">No utility charges recorded in this period.</td></tr>'}</tbody>
-      </table>
+    // ── Table 7: Electricity & Utility Consumption Breakdown ──
+    paginator.addTable({
+      titleHtml: '<div class="pdf-section-title">7. Electricity &amp; Utility Consumption Breakdown</div>',
+      tableHeaderHtml: '<tr><th>#</th><th>Tenant &amp; Unit</th><th>Utility</th><th>Prev Reading</th><th>Prev Date</th><th>Curr Reading</th><th>Curr Date</th><th>Units</th><th>Rate / Plan</th><th>Total Charge</th></tr>',
+      colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:18%;"><col style="width:9%;"><col style="width:10%;"><col style="width:10%;"><col style="width:10%;"><col style="width:10%;"><col style="width:9%;"><col style="width:10%;"><col style="width:11%;"></colgroup>',
+      rows: bills,
+      renderRow: (b, i) => {
+        const tenant = tenants.find(t => t.id === b.tenantId);
+        const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+        const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+        const eDates = getMeterReadingDates(b, bills, tenant);
+        return `<tr>
+          <td>${i + 1}</td>
+          <td><strong>${tenantName}</strong> (Unit ${unitNo})</td>
+          <td>Electricity</td>
+          <td>${b.previousMeterReading != null ? b.previousMeterReading : '—'}</td>
+          <td>${formatDDMMYYYY(eDates.prevDate) || '—'}</td>
+          <td>${b.currentMeterReading != null ? b.currentMeterReading : '—'}</td>
+          <td>${formatDDMMYYYY(eDates.currDate) || '—'}</td>
+          <td style="font-weight:600;">${b.electricityUnits || 0} u</td>
+          <td>${b.electricityRate ? `₹${b.electricityRate}/u` : (b.electricityFixedAmount ? `Fixed ₹${b.electricityFixedAmount}` : '—')}</td>
+          <td style="font-weight:700;color:#1e1b4b;">${fmt(b.electricityCharge)}</td>
+        </tr>`;
+      },
+      emptyHtml: '<p style="font-size:8.5px;color:#6b7280;padding:8px 0;">No utility charges recorded in this period.</p>',
+      titleHeight: 22,
+      headerHeight: 20,
+      rowHeight: 18
+    });
 
-      <div class="pdf-section-title" style="margin-top:12px;">8. Outstanding Dues &amp; Overdue Invoices</div>
-      <table class="pdf-table">
-        <colgroup>
-          <col style="width:4%;">
-          <col style="width:18%;">
-          <col style="width:8%;">
-          <col style="width:13%;">
-          <col style="width:11%;">
-          <col style="width:11%;">
-          <col style="width:10%;">
-          <col style="width:9%;">
-          <col style="width:8%;">
-          <col style="width:8%;">
-        </colgroup>
-        <thead><tr><th>#</th><th>Tenant</th><th>Unit</th><th>Bill No.</th><th>Month</th><th>Due Date</th><th>Overdue</th><th>Total Bill</th><th>Paid</th><th>Remaining</th></tr></thead>
-        <tbody>${duesRows || '<tr><td colspan="10" style="text-align:center;color:#15803d;font-weight:700;">✓ Outstanding balance zero! All bills are fully paid in this period.</td></tr>'}</tbody>
-      </table>
+    // ── Table 8: Outstanding Dues & Overdue Invoices ──
+    paginator.addTable({
+      titleHtml: `<div class="pdf-section-title">8. Outstanding Dues &amp; Overdue Invoices (${outstandingBills.length} invoice${outstandingBills.length !== 1 ? 's' : ''})</div>`,
+      tableHeaderHtml: '<tr><th>#</th><th>Tenant</th><th>Unit</th><th>Bill No.</th><th>Month</th><th>Due Date</th><th>Overdue</th><th>Total Bill</th><th>Paid</th><th>Remaining</th></tr>',
+      colgroupHtml: '<colgroup><col style="width:4%;"><col style="width:18%;"><col style="width:8%;"><col style="width:13%;"><col style="width:11%;"><col style="width:11%;"><col style="width:10%;"><col style="width:9%;"><col style="width:8%;"><col style="width:8%;"></colgroup>',
+      rows: outstandingBills,
+      renderRow: (b, i) => {
+        const tenant = tenants.find(t => t.id === b.tenantId);
+        const tenantName = tenant ? tenant.name : (b.tenantName || 'Tenant');
+        const unitNo = b.unitNumber || (units.find(u => u.id === b.unitId)?.unitNumber) || '—';
+        const overdue = getDaysOverdue(b.dueDate);
+        return `<tr>
+          <td>${i + 1}</td>
+          <td><strong>${tenantName}</strong></td>
+          <td>Unit ${unitNo}</td>
+          <td>${b.billNumber || '—'}</td>
+          <td>${formatMonthReadable(b.billingMonth)}</td>
+          <td>${fmtDate(b.dueDate)}</td>
+          <td style="color:${overdue > 0 ? '#b91c1c' : '#4b5563'};font-weight:600;">${overdue > 0 ? `${overdue} days` : 'Current'}</td>
+          <td>${fmt(b.totalAmount)}</td>
+          <td style="color:#15803d;">${fmt(b.paidAmount)}</td>
+          <td style="color:#b91c1c;font-weight:700;">${fmt(b.remainingAmount)}</td>
+        </tr>`;
+      },
+      emptyHtml: '<p style="font-size:8.5px;color:#15803d;font-weight:700;padding:8px 0;">✓ Outstanding balance zero! All bills are fully paid in this period.</p>',
+      titleHeight: 22,
+      headerHeight: 20,
+      rowHeight: 18
+    });
 
-      <!-- Footer -->
-      <div style="margin-top:16px;border-top:1px solid #e5e7eb;padding-top:8px;font-size:8px;color:#9ca3af;text-align:center;">
+    // ── Block 9: Footer ──
+    const footerHtml = `
+      <div style="margin-top:14px;border-top:1px solid #e5e7eb;padding-top:8px;font-size:8px;color:#9ca3af;text-align:center;">
         Generated automatically by Rentora Cloud Platform &bull; Landlord: ${ownerName} &bull; ${fmtDateTime(new Date().toISOString())}
         <br>This business report contains consolidated property operational and financial data. Preserved securely for tax and landlord accounting.
       </div>
     `;
+    paginator.addBlock(35, footerHtml);
 
-    const fullPdfHtml = `
-      ${page1Html}
-      ${page2Html}
-      ${page3Html}
-      ${page4Html}
-      ${page5Html}
-    `;
+    const fullPdfHtml = paginator.compileHtml();
 
     // Create temporary offscreen container for html2pdf
     const container = document.createElement('div');
     container.id = 'rentora-pdf-temp-container';
-    container.style.position = 'fixed';
+    container.style.position = 'absolute';
     container.style.top = '0';
     container.style.left = '0';
     container.style.width = '1060px';
-    container.style.minHeight = '750px';
+    container.style.height = 'auto';
+    container.style.minHeight = '0';
     container.style.zIndex = '-99999';
     container.style.backgroundColor = '#ffffff';
     container.style.opacity = '1';
     container.style.visibility = 'visible';
     container.style.pointerEvents = 'none';
-    container.style.overflow = 'hidden';
     container.style.boxSizing = 'border-box';
     container.style.margin = '0';
     container.style.padding = '0';
@@ -3166,8 +3213,7 @@
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
         pagebreak: {
-          mode: ['css', 'legacy'],
-          before: '.pdf-page-break',
+          mode: ['css'],
           avoid: ['tr', '.pdf-grid-table', '.pdf-header', '.pdf-mini-header', '.pdf-section-title']
         }
       };
@@ -3722,13 +3768,15 @@
         width: 1040px !important;
         max-width: 1040px !important;
         margin: 0 auto !important;
-        padding: 4px 8px !important;
+        padding: 4px 6px !important;
         box-sizing: border-box !important;
       }
       .pdf-header {
         border-bottom: 2px solid #4F46E5 !important;
         padding-bottom: 8px !important;
         margin-bottom: 10px !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       .pdf-header-table {
         width: 100% !important;
@@ -3745,6 +3793,8 @@
         padding-bottom: 5px !important;
         margin-bottom: 8px !important;
         box-sizing: border-box !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       .pdf-mini-header-table {
         width: 100% !important;
@@ -3809,6 +3859,14 @@
         margin-bottom: 8px !important;
         font-size: 8.2px !important;
         box-sizing: border-box !important;
+        page-break-inside: auto !important;
+        break-inside: auto !important;
+      }
+      .pdf-table thead {
+        display: table-header-group !important;
+      }
+      .pdf-table tfoot {
+        display: table-footer-group !important;
       }
       .pdf-table th {
         background: #4F46E5 !important;
@@ -3832,6 +3890,10 @@
         word-break: break-word !important;
         box-sizing: border-box !important;
       }
+      .pdf-table tr {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
       .pdf-table tr:nth-child(even) td {
         background: #f9fafb !important;
       }
@@ -3847,6 +3909,8 @@
         table-layout: fixed !important;
         margin-bottom: 8px !important;
         box-sizing: border-box !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       .pdf-grid-table td {
         padding: 4px 6px !important;
@@ -3904,16 +3968,11 @@
         height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
-      }
-      @media print {
-        body {
-          -webkit-print-color-adjust: exact !important;
-          print-color-adjust: exact !important;
-        }
+        border: none !important;
       }
     `;
 
-    function miniHeader(subTitle) {
+    function miniHeader(pageNo) {
       return `
         <div class="pdf-mini-header">
           <table class="pdf-mini-header-table">
@@ -3925,7 +3984,7 @@
               <td class="pdf-mini-header-cell-right">
                 ${data.reportType === 'active' ? 'Active Tenant Historical Report' : 'Vacated Tenant Historical Report'}
                 &nbsp;•&nbsp; <strong>${tenant.name}</strong> (Unit ${tenant.unitNumber || '—'})
-                ${subTitle ? ` &nbsp;•&nbsp; <span style="color:#4F46E5;">${subTitle}</span>` : ''}
+                &nbsp;•&nbsp; <span style="color:#4F46E5;">Page ${pageNo}</span>
               </td>
             </tr>
           </table>
@@ -3933,18 +3992,10 @@
       `;
     }
 
-    function chunkArray(arr, size) {
-      if (!arr || arr.length === 0) return [];
-      const res = [];
-      for (let i = 0; i < arr.length; i += size) {
-        res.push(arr.slice(i, i + size));
-      }
-      return res;
-    }
-
-    let contentHtml = '';
     const safeTenantName = tenant.name.replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `Rentora_${data.reportType === 'active' ? 'ActiveTenantReport' : 'TenantReport'}_${safeTenantName}_${tenant.id}.pdf`;
+
+    const paginator = buildContentAwarePages(680, miniHeader);
 
     // =========================================================================
     // PDF CASE A: ACTIVE TENANT HISTORICAL REPORT
@@ -3952,28 +4003,8 @@
     if (data.reportType === 'active') {
       const { readings, bills, payments, ledger, summary: fin, startDate, endDate } = data;
 
-      // Electricity Reading Rows
-      let elecRows = '';
-      bills.forEach((b, i) => {
-        const mtrDates = getMeterReadingDates(b, bills, tenant);
-        elecRows += `<tr>
-          <td>${i + 1}</td>
-          <td>${formatMonthReadable(b.billingMonth)}</td>
-          <td>${b.billNumber || '—'}</td>
-          <td>${b.previousMeterReading !== undefined && b.previousMeterReading !== null ? b.previousMeterReading : '—'}</td>
-          <td>${formatDDMMYYYY(mtrDates.prevDate) || '—'}</td>
-          <td>${b.currentMeterReading !== undefined && b.currentMeterReading !== null ? b.currentMeterReading : '—'}</td>
-          <td>${formatDDMMYYYY(mtrDates.currDate) || '—'}</td>
-          <td style="font-weight:700;">${b.electricityUnits || 0} u</td>
-          <td>₹${b.electricityRate || 0}</td>
-          <td style="font-weight:700;color:#4F46E5;">${fmt(b.electricityCharge)}</td>
-          <td>${fmt(b.waterCharge)}</td>
-        </tr>`;
-      });
-
-      // Page 1: Overview & Tenancy Summary
-      let page1Html = `
-        <!-- Main Top Header -->
+      // Block 1: Main Header, Tenant Profile & Financial Overview
+      const topSectionHtml = `
         <div class="pdf-header">
           <table class="pdf-header-table">
             <tr>
@@ -3993,7 +4024,6 @@
           </table>
         </div>
 
-        <!-- Section 1: Tenant Information -->
         <div>
           <div class="pdf-section-title">1. Tenant Profile &amp; Tenancy Details</div>
           <table class="pdf-grid-table">
@@ -4020,7 +4050,6 @@
           </table>
         </div>
 
-        <!-- Section 2: Financial Ledger Overview -->
         <div>
           <div class="pdf-section-title">2. Financial Ledger Overview (Period: ${formatDDMMYYYY(startDate)} → ${formatDDMMYYYY(endDate)})</div>
           <table class="pdf-grid-table" style="margin-bottom:8px;">
@@ -4044,146 +4073,79 @@
             </tr>
           </table>
         </div>
-
-        <!-- Section 3: Electricity & Utilities Reading History -->
-        <div>
-          <div class="pdf-section-title">3. Electricity Meter Reading &amp; Utilities History</div>
-          ${bills.length === 0 ? '<p style="color:#6b7280;padding:4px 0;font-size:8px;">No electricity meter readings in this period.</p>' : `
-          <table class="pdf-table">
-            <colgroup>
-              <col style="width:3%;">
-              <col style="width:9%;">
-              <col style="width:10%;">
-              <col style="width:8%;">
-              <col style="width:11%;">
-              <col style="width:8%;">
-              <col style="width:11%;">
-              <col style="width:8%;">
-              <col style="width:6%;">
-              <col style="width:13%;">
-              <col style="width:13%;">
-            </colgroup>
-            <thead>
-              <tr>
-                <th>#</th><th>Month</th><th>Bill No</th><th>Prev Reading</th><th>Prev Reading Date</th>
-                <th>Curr Reading</th><th>Curr Reading Date</th><th>Units</th><th>Rate (₹)</th><th>Elec Charge</th><th>Water Charge</th>
-              </tr>
-            </thead>
-            <tbody>${elecRows}</tbody>
-            <tfoot>
-              <tr class="pdf-total-row">
-                <td colspan="7" style="text-align:right;">TOTAL CONSUMPTION &amp; CHARGES →</td>
-                <td>${fin.totalElecUnits} units</td>
-                <td>—</td>
-                <td>${fmt(fin.totalElecCharge)}</td>
-                <td>${fmt(fin.totalWaterCharge)}</td>
-              </tr>
-            </tfoot>
-          </table>`}
-        </div>
       `;
+      paginator.addBlock(250, topSectionHtml);
 
-      // Bills Section: If <= 4 bills, fits on Page 1; if > 4 bills, starts on Page 2
-      const breakBeforeBills = bills.length > 4;
-      const billChunks = chunkArray(bills, 13);
-      let page2Html = '';
+      // Section 3: Electricity Meter Reading & Utilities History Table
+      paginator.addTable({
+        titleHtml: '<div class="pdf-section-title">3. Electricity Meter Reading &amp; Utilities History</div>',
+        colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:9%;"><col style="width:10%;"><col style="width:8%;"><col style="width:11%;"><col style="width:8%;"><col style="width:11%;"><col style="width:8%;"><col style="width:6%;"><col style="width:13%;"><col style="width:13%;"></colgroup>',
+        tableHeaderHtml: '<tr><th>#</th><th>Month</th><th>Bill No</th><th>Prev Reading</th><th>Prev Reading Date</th><th>Curr Reading</th><th>Curr Reading Date</th><th>Units</th><th>Rate (₹)</th><th>Elec Charge</th><th>Water Charge</th></tr>',
+        rows: bills,
+        renderRow: (b, i) => {
+          const mtrDates = getMeterReadingDates(b, bills, tenant);
+          return `<tr>
+            <td>${i + 1}</td>
+            <td>${formatMonthReadable(b.billingMonth)}</td>
+            <td>${b.billNumber || '—'}</td>
+            <td>${b.previousMeterReading !== undefined && b.previousMeterReading !== null ? b.previousMeterReading : '—'}</td>
+            <td>${formatDDMMYYYY(mtrDates.prevDate) || '—'}</td>
+            <td>${b.currentMeterReading !== undefined && b.currentMeterReading !== null ? b.currentMeterReading : '—'}</td>
+            <td>${formatDDMMYYYY(mtrDates.currDate) || '—'}</td>
+            <td style="font-weight:700;">${b.electricityUnits || 0} u</td>
+            <td>₹${b.electricityRate || 0}</td>
+            <td style="font-weight:700;color:#4F46E5;">${fmt(b.electricityCharge)}</td>
+            <td>${fmt(b.waterCharge)}</td>
+          </tr>`;
+        },
+        footerHtml: `<tfoot><tr class="pdf-total-row"><td colspan="7" style="text-align:right;">TOTAL CONSUMPTION &amp; CHARGES →</td><td>${fin.totalElecUnits} units</td><td>—</td><td>${fmt(fin.totalElecCharge)}</td><td>${fmt(fin.totalWaterCharge)}</td></tr></tfoot>`,
+        emptyHtml: '<p style="color:#6b7280;padding:4px 0;font-size:8px;">No electricity meter readings in this period.</p>',
+        titleHeight: 22,
+        headerHeight: 20,
+        rowHeight: 18,
+        footerHeight: 20
+      });
 
-      if (billChunks.length === 0) {
-        page2Html = `
-          <div style="margin-top:10px;">
-            <div class="pdf-section-title">4. Generated Bills &amp; Dues History (0 bills)</div>
-            <p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No bills generated in this date range.</p>
-          </div>
-        `;
-      } else {
-        billChunks.forEach((chunk, chunkIdx) => {
-          let rowsHtml = '';
-          chunk.forEach((b, rowIdx) => {
-            const globalIdx = chunkIdx * 13 + rowIdx + 1;
-            const stLabel = paymentStatusLabel(b);
-            const badgeClass = stLabel === 'PAID' ? 'badge-paid' : stLabel === 'PARTIALLY PAID' ? 'badge-partial' : 'badge-unpaid';
-            rowsHtml += `<tr>
-              <td>${globalIdx}</td>
-              <td>${b.billNumber || '—'}</td>
-              <td>${formatMonthReadable(b.billingMonth)}</td>
-              <td>${formatDDMMYYYY(getBillDate(b))}</td>
-              <td>${formatDDMMYYYY(b.dueDate)}</td>
-              <td>${fmt(b.rent)}</td>
-              <td>${b.electricityUnits || 0} u (${fmt(b.electricityCharge)})</td>
-              <td>${fmt(b.waterCharge)}</td>
-              <td>${fmt(b.previousDue)}</td>
-              <td>${fmt(b.totalAmount)}</td>
-              <td style="color:#059669;font-weight:700;">${fmt(b.paidAmount)}</td>
-              <td style="color:${Number(b.remainingAmount) > 0 ? '#dc2626' : '#059669'};font-weight:700;">${fmt(b.remainingAmount)}</td>
-              <td><span class="${badgeClass}">${stLabel}</span></td>
-            </tr>`;
-          });
+      // Section 4: Generated Bills & Dues History Table
+      paginator.addTable({
+        titleHtml: `<div class="pdf-section-title">4. Generated Bills &amp; Dues History (${bills.length} bills)</div>`,
+        colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:10%;"><col style="width:8%;"><col style="width:8%;"><col style="width:8%;"><col style="width:8%;"><col style="width:9%;"><col style="width:6%;"><col style="width:7%;"><col style="width:9%;"><col style="width:8%;"><col style="width:8%;"><col style="width:8%;"></colgroup>',
+        tableHeaderHtml: '<tr><th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th><th>Rent</th><th>Electricity</th><th>Water</th><th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th></tr>',
+        rows: bills,
+        renderRow: (b, i) => {
+          const stLabel = paymentStatusLabel(b);
+          const badgeClass = stLabel === 'PAID' ? 'badge-paid' : stLabel === 'PARTIALLY PAID' ? 'badge-partial' : 'badge-unpaid';
+          return `<tr>
+            <td>${i + 1}</td>
+            <td>${b.billNumber || '—'}</td>
+            <td>${formatMonthReadable(b.billingMonth)}</td>
+            <td>${formatDDMMYYYY(getBillDate(b))}</td>
+            <td>${formatDDMMYYYY(b.dueDate)}</td>
+            <td>${fmt(b.rent)}</td>
+            <td>${b.electricityUnits || 0} u (${fmt(b.electricityCharge)})</td>
+            <td>${fmt(b.waterCharge)}</td>
+            <td>${fmt(b.previousDue)}</td>
+            <td>${fmt(b.totalAmount)}</td>
+            <td style="color:#059669;font-weight:700;">${fmt(b.paidAmount)}</td>
+            <td style="color:${Number(b.remainingAmount) > 0 ? '#dc2626' : '#059669'};font-weight:700;">${fmt(b.remainingAmount)}</td>
+            <td><span class="${badgeClass}">${stLabel}</span></td>
+          </tr>`;
+        },
+        footerHtml: `<tfoot><tr class="pdf-total-row"><td colspan="5" style="text-align:right;">PERIOD TOTALS →</td><td>${fmt(fin.totalRentBilled)}</td><td>${fmt(fin.totalElecCharge)}</td><td>${fmt(fin.totalWaterCharge)}</td><td>—</td><td>${fmt(fin.periodBilled)}</td><td>${fmt(bills.reduce((s,b)=>s+(Number(b.paidAmount)||0),0))}</td><td>${fmt(fin.totalOutstanding)}</td><td></td></tr></tfoot>`,
+        emptyHtml: '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No bills generated in this date range.</p>',
+        titleHeight: 22,
+        headerHeight: 20,
+        rowHeight: 18,
+        footerHeight: 20
+      });
 
-          const isLastChunk = chunkIdx === billChunks.length - 1;
-          const footerHtml = isLastChunk ? `
-            <tfoot>
-              <tr class="pdf-total-row">
-                <td colspan="5" style="text-align:right;">PERIOD TOTALS →</td>
-                <td>${fmt(fin.totalRentBilled)}</td>
-                <td>${fmt(fin.totalElecCharge)}</td>
-                <td>${fmt(fin.totalWaterCharge)}</td>
-                <td>—</td>
-                <td>${fmt(fin.periodBilled)}</td>
-                <td>${fmt(bills.reduce((s,b)=>s+(Number(b.paidAmount)||0),0))}</td>
-                <td>${fmt(fin.totalOutstanding)}</td>
-                <td></td>
-              </tr>
-            </tfoot>` : '';
-
-          const isFirstPageOfBills = chunkIdx === 0;
-          const needsBreak = (isFirstPageOfBills && breakBeforeBills) || (!isFirstPageOfBills);
-
-          page2Html += `
-            ${needsBreak ? `<div class="html2pdf__page-break pdf-page-break"></div>${miniHeader(isFirstPageOfBills ? 'Bills History' : `Bills History (Page ${chunkIdx + 1})`)}` : ''}
-            <div>
-              <div class="pdf-section-title">4. Generated Bills &amp; Dues History (${bills.length} bills)${chunkIdx > 0 ? ` &nbsp;—&nbsp; Continued (Page ${chunkIdx + 1})` : ''}</div>
-              <table class="pdf-table">
-                <colgroup>
-                  <col style="width:3%;">
-                  <col style="width:10%;">
-                  <col style="width:8%;">
-                  <col style="width:8%;">
-                  <col style="width:8%;">
-                  <col style="width:8%;">
-                  <col style="width:9%;">
-                  <col style="width:6%;">
-                  <col style="width:7%;">
-                  <col style="width:9%;">
-                  <col style="width:8%;">
-                  <col style="width:8%;">
-                  <col style="width:8%;">
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th>
-                    <th>Rent</th><th>Electricity</th><th>Water</th><th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>${rowsHtml}</tbody>
-                ${footerHtml}
-              </table>
-            </div>
-          `;
-        });
-      }
-
-      // Page 3+: Payments & Date-Wise Ledger
-      let page3Html = `
-        <div class="html2pdf__page-break pdf-page-break"></div>
-        ${miniHeader('Payments & Ledger')}
-        <div class="pdf-section-title">5. Actual Payment Transactions Received (${payments.length} transaction${payments.length !== 1 ? 's' : ''})</div>
-      `;
-
-      if (payments.length === 0) {
-        page3Html += '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No payments recorded in this date range.</p>';
-      } else {
-        let paymentsTableRows = '';
-        payments.forEach((p, i) => {
+      // Section 5: Actual Payment Transactions Received Table
+      paginator.addTable({
+        titleHtml: `<div class="pdf-section-title">5. Actual Payment Transactions Received (${payments.length} transaction${payments.length !== 1 ? 's' : ''})</div>`,
+        colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:9%;"><col style="width:6%;"><col style="width:10%;"><col style="width:10%;"><col style="width:14%;"><col style="width:32%;"><col style="width:16%;"></colgroup>',
+        tableHeaderHtml: '<tr><th>#</th><th>Date</th><th>Time</th><th>Amount</th><th>Method</th><th>Txn / Ref ID</th><th>Payment Received Against</th><th>Notes</th></tr>',
+        rows: payments,
+        renderRow: (p, i) => {
           const dateStr = getPaymentDate(p);
           const timeStr = p.createdAt && p.createdAt.includes('T') ? p.createdAt.split('T')[1].slice(0, 5) : '—';
           let allocDesc = '—';
@@ -4192,7 +4154,7 @@
           } else if (p.billId) {
             allocDesc = p.billId === 'advance' ? 'Advance Rent' : `Bill ${p.billId}`;
           }
-          paymentsTableRows += `<tr>
+          return `<tr>
             <td>${i + 1}</td>
             <td>${formatDDMMYYYY(dateStr)}</td>
             <td>${timeStr}</td>
@@ -4202,105 +4164,48 @@
             <td>${allocDesc}</td>
             <td>${p.notes || '—'}</td>
           </tr>`;
-        });
+        },
+        footerHtml: `<tfoot><tr class="pdf-total-row"><td colspan="3" style="text-align:right;">TOTAL RECEIVED IN PERIOD →</td><td>${fmt(fin.periodPaid)}</td><td colspan="4"></td></tr></tfoot>`,
+        emptyHtml: '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No payments recorded in this date range.</p>',
+        titleHeight: 22,
+        headerHeight: 20,
+        rowHeight: 18,
+        footerHeight: 20
+      });
 
-        page3Html += `
-          <table class="pdf-table">
-            <colgroup>
-              <col style="width:3%;">
-              <col style="width:9%;">
-              <col style="width:6%;">
-              <col style="width:10%;">
-              <col style="width:10%;">
-              <col style="width:14%;">
-              <col style="width:32%;">
-              <col style="width:16%;">
-            </colgroup>
-            <thead>
-              <tr>
-                <th>#</th><th>Date</th><th>Time</th><th>Amount</th><th>Method</th><th>Txn / Ref ID</th><th>Payment Received Against</th><th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>${paymentsTableRows}</tbody>
-            <tfoot>
-              <tr class="pdf-total-row">
-                <td colspan="3" style="text-align:right;">TOTAL RECEIVED IN PERIOD →</td>
-                <td>${fmt(fin.periodPaid)}</td>
-                <td colspan="4"></td>
-              </tr>
-            </tfoot>
-          </table>
-        `;
-      }
+      // Section 6: Date-Wise Account Ledger Table
+      paginator.addTable({
+        titleHtml: `<div class="pdf-section-title">6. Date-Wise Account Ledger (Running Audit Trail) (${ledger.length} entries)</div>`,
+        colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:9%;"><col style="width:8%;"><col style="width:11%;"><col style="width:37%;"><col style="width:10%;"><col style="width:10%;"><col style="width:12%;"></colgroup>',
+        tableHeaderHtml: '<tr><th>#</th><th>Date</th><th>Type</th><th>Ref</th><th>Description</th><th>Debit (+)</th><th>Credit (-)</th><th>Balance</th></tr>',
+        rows: ledger,
+        renderRow: (entry, i) => `<tr>
+          <td>${i + 1}</td>
+          <td>${formatDDMMYYYY(entry.date)}</td>
+          <td><strong style="color:${entry.type === 'bill' ? '#4F46E5' : entry.type === 'payment' ? '#059669' : '#6b7280'}">${entry.typeLabel}</strong></td>
+          <td style="font-family:monospace;font-size:7.5px;">${entry.reference}</td>
+          <td>${entry.description}</td>
+          <td>${entry.debit > 0 ? fmt(entry.debit) : '—'}</td>
+          <td style="color:#059669;font-weight:700;">${entry.credit > 0 ? fmt(entry.credit) : '—'}</td>
+          <td style="font-weight:800;color:${entry.balance > 0 ? '#dc2626' : entry.balance < 0 ? '#059669' : '#111827'};">${fmt(entry.balance)}</td>
+        </tr>`,
+        emptyHtml: '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No ledger transactions available.</p>',
+        titleHeight: 22,
+        headerHeight: 20,
+        rowHeight: 18
+      });
 
-      // Ledger Section - Chunking if needed
-      let ledgerHtml = '';
-      const ledgerChunks = chunkArray(ledger, 15);
-      if (ledgerChunks.length === 0) {
-        ledgerHtml = '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No ledger transactions available.</p>';
-      } else {
-        // If payments took substantial space, break to new page for ledger
-        const needBreakBeforeLedger = payments.length > 5 || ledger.length > 7;
-        ledgerChunks.forEach((chunk, chunkIdx) => {
-          let rowsHtml = '';
-          chunk.forEach((entry, rowIdx) => {
-            const globalIdx = chunkIdx * 15 + rowIdx + 1;
-            rowsHtml += `<tr>
-              <td>${globalIdx}</td>
-              <td>${formatDDMMYYYY(entry.date)}</td>
-              <td><strong style="color:${entry.type === 'bill' ? '#4F46E5' : entry.type === 'payment' ? '#059669' : '#6b7280'}">${entry.typeLabel}</strong></td>
-              <td style="font-family:monospace;font-size:7.5px;">${entry.reference}</td>
-              <td>${entry.description}</td>
-              <td>${entry.debit > 0 ? fmt(entry.debit) : '—'}</td>
-              <td style="color:#059669;font-weight:700;">${entry.credit > 0 ? fmt(entry.credit) : '—'}</td>
-              <td style="font-weight:800;color:${entry.balance > 0 ? '#dc2626' : entry.balance < 0 ? '#059669' : '#111827'};">${fmt(entry.balance)}</td>
-            </tr>`;
-          });
-
-          const pageBreakMarkup = (needBreakBeforeLedger && chunkIdx === 0) || chunkIdx > 0
-            ? `<div class="html2pdf__page-break pdf-page-break"></div>${miniHeader(chunkIdx === 0 ? 'Account Ledger' : `Account Ledger (Page ${chunkIdx + 1})`)}`
-            : '';
-
-          ledgerHtml += `
-            ${pageBreakMarkup}
-            <div class="pdf-section-title">6. Date-Wise Account Ledger (Running Audit Trail)${chunkIdx > 0 ? ` &nbsp;—&nbsp; Continued (Page ${chunkIdx + 1})` : ''}</div>
-            <table class="pdf-table">
-              <colgroup>
-                <col style="width:3%;">
-                <col style="width:9%;">
-                <col style="width:8%;">
-                <col style="width:11%;">
-                <col style="width:37%;">
-                <col style="width:10%;">
-                <col style="width:10%;">
-                <col style="width:12%;">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>#</th><th>Date</th><th>Type</th><th>Ref</th><th>Description</th><th>Debit (+)</th><th>Credit (-)</th><th>Balance</th>
-                </tr>
-              </thead>
-              <tbody>${rowsHtml}</tbody>
-            </table>
-          `;
-        });
-      }
-
-      contentHtml = `
-        ${page1Html}
-        ${page2Html}
-        ${page3Html}
-        ${ledgerHtml}
-        <!-- Footer -->
+      // Footer
+      paginator.addBlock(35, `
         <div style="margin-top:14px;border-top:1px solid #e5e7eb;padding-top:8px;font-size:8px;color:#9ca3af;text-align:center;">
           Generated by Rentora Cloud Platform &nbsp;|&nbsp; Landlord: ${ownerName} &nbsp;|&nbsp; ${fmtDateTime(new Date().toISOString())}
           <br>This report reflects actual financial ledger entries for an active tenant residing at the property. No final settlement has been generated.
         </div>
-      `;
+      `);
     }
 
     // =========================================================================
-    // PDF CASE B: VACATED TENANT HISTORICAL REPORT (PRESERVE EXISTING)
+    // PDF CASE B: VACATED TENANT HISTORICAL REPORT
     // =========================================================================
     if (data.reportType === 'vacated') {
       const { settlement, bills, payments, expiry, summary: fin } = data;
@@ -4312,25 +4217,6 @@
         return '<span class="badge-unpaid">UNPAID</span>';
       };
 
-      // Electricity Reading Rows
-      let elecRows = '';
-      bills.forEach((b, i) => {
-        const mtrDates = getMeterReadingDates(b, bills, tenant);
-        elecRows += `<tr>
-          <td>${i + 1}</td>
-          <td>${formatMonthReadable(b.billingMonth)}</td>
-          <td>${b.billNumber || '—'}</td>
-          <td>${b.previousMeterReading !== undefined && b.previousMeterReading !== null ? b.previousMeterReading : '—'}</td>
-          <td>${formatDDMMYYYY(mtrDates.prevDate) || '—'}</td>
-          <td>${b.currentMeterReading !== undefined && b.currentMeterReading !== null ? b.currentMeterReading : '—'}</td>
-          <td>${formatDDMMYYYY(mtrDates.currDate) || '—'}</td>
-          <td style="font-weight:700;">${b.electricityUnits || 0} u</td>
-          <td>₹${b.electricityRate || 0}</td>
-          <td style="font-weight:700;color:#4F46E5;">${fmt(b.electricityCharge)}</td>
-          <td>${fmt(b.waterCharge)}</td>
-        </tr>`;
-      });
-
       const totalCharges = Number(settlement.totalCharges) || 0;
       const netSettlement = Math.abs(Number(settlement.netSettlementAmount != null ? settlement.netSettlementAmount : settlement.finalAmount != null ? settlement.finalAmount : settlement.netAmount) || 0);
       const statusLabel = getSettlementStatusLabel(settlement);
@@ -4340,9 +4226,8 @@
       const amtSettled = Number(settlement.amountSettled) || 0;
       const amtPending = Number(settlement.amountPending != null ? settlement.amountPending : Math.max(0, netSettlement - amtSettled));
 
-      // Page 1: Overview & Settlement Summary
-      let page1Html = `
-        <!-- Header -->
+      // Block 1: Main Header, Expiry notice, Tenant Profile & Final Settlement Summary
+      const vacatedTopHtml = `
         <div class="pdf-header">
           <table class="pdf-header-table">
             <tr>
@@ -4362,12 +4247,10 @@
           </table>
         </div>
 
-        <!-- Expiry notice -->
         <div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:4px;padding:5px 8px;font-size:8px;color:#1e40af;margin-bottom:8px;">
           ⏳ Report Access Window: ${fmtDateTime(expiry.start.toISOString())} → ${fmtDateTime(expiry.expiry.toISOString())} &nbsp;|&nbsp; ${formatRemaining(expiry.remaining)}
         </div>
 
-        <!-- Section 1: Tenant Info -->
         <div>
           <div class="pdf-section-title">1. Tenant Profile &amp; Tenancy Details</div>
           <table class="pdf-grid-table">
@@ -4394,7 +4277,6 @@
           </table>
         </div>
 
-        <!-- Section 2: Final Settlement Summary -->
         <div>
           <div class="pdf-section-title">2. Final Settlement Summary</div>
           <table class="pdf-grid-table" style="margin-bottom:8px;">
@@ -4422,144 +4304,77 @@
             </tr>
           </table>
         </div>
-
-        <!-- Section 3: Electricity & Utilities History -->
-        <div>
-          <div class="pdf-section-title">3. Electricity Meter Reading &amp; Utilities History</div>
-          ${bills.length === 0 ? '<p style="color:#6b7280;padding:4px 0;font-size:8px;">No electricity meter readings found.</p>' : `
-          <table class="pdf-table">
-            <colgroup>
-              <col style="width:3%;">
-              <col style="width:9%;">
-              <col style="width:10%;">
-              <col style="width:8%;">
-              <col style="width:11%;">
-              <col style="width:8%;">
-              <col style="width:11%;">
-              <col style="width:8%;">
-              <col style="width:6%;">
-              <col style="width:13%;">
-              <col style="width:13%;">
-            </colgroup>
-            <thead>
-              <tr>
-                <th>#</th><th>Month</th><th>Bill No</th><th>Prev Reading</th><th>Prev Reading Date</th>
-                <th>Curr Reading</th><th>Curr Reading Date</th><th>Units</th><th>Rate (₹)</th><th>Elec Charge</th><th>Water Charge</th>
-              </tr>
-            </thead>
-            <tbody>${elecRows}</tbody>
-            <tfoot>
-              <tr class="pdf-total-row">
-                <td colspan="7" style="text-align:right;">TOTAL CONSUMPTION &amp; CHARGES →</td>
-                <td>${bills.reduce((s,b)=>s+(Number(b.electricityUnits)||0),0)} units</td>
-                <td>—</td>
-                <td>${fmt(bills.reduce((s,b)=>s+(Number(b.electricityCharge)||0),0))}</td>
-                <td>${fmt(bills.reduce((s,b)=>s+(Number(b.waterCharge)||0),0))}</td>
-              </tr>
-            </tfoot>
-          </table>`}
-        </div>
       `;
+      paginator.addBlock(270, vacatedTopHtml);
 
-      // Page 2+: Bills History with Repeating Table Header
-      let page2Html = '';
-      const breakBeforeVacBills = bills.length > 4;
-      const billChunks = chunkArray(bills, 13);
-      if (billChunks.length === 0) {
-        page2Html = `
-          <div style="margin-top:10px;">
-            <div class="pdf-section-title">4. Complete Bills History (0 bills)</div>
-            <p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No bills on record for this tenancy.</p>
-          </div>
-        `;
-      } else {
-        billChunks.forEach((chunk, chunkIdx) => {
-          let rowsHtml = '';
-          chunk.forEach((b, rowIdx) => {
-            const globalIdx = chunkIdx * 13 + rowIdx + 1;
-            rowsHtml += `<tr>
-              <td>${globalIdx}</td>
-              <td>${b.billNumber || '—'}</td>
-              <td>${b.billingMonth || '—'}</td>
-              <td>${formatDDMMYYYY(b.createdAt || getBillDate(b))}</td>
-              <td>${formatDDMMYYYY(b.dueDate)}</td>
-              <td>${fmt(b.rent)}</td>
-              <td>${b.electricityUnits || 0} u</td>
-              <td>${fmt(b.electricityCharge)}</td>
-              <td>${fmt(b.waterCharge)}</td>
-              <td>${fmt(b.parkingCharge)}</td>
-              <td>${fmt(b.previousDue)}</td>
-              <td>${fmt(b.totalAmount)}</td>
-              <td>${fmt(b.paidAmount)}</td>
-              <td>${fmt(b.remainingAmount)}</td>
-              <td>${statusBadge(b)}</td>
-            </tr>`;
-          });
+      // Section 3: Electricity Meter Reading & Utilities History Table
+      paginator.addTable({
+        titleHtml: '<div class="pdf-section-title">3. Electricity Meter Reading &amp; Utilities History</div>',
+        colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:9%;"><col style="width:10%;"><col style="width:8%;"><col style="width:11%;"><col style="width:8%;"><col style="width:11%;"><col style="width:8%;"><col style="width:6%;"><col style="width:13%;"><col style="width:13%;"></colgroup>',
+        tableHeaderHtml: '<tr><th>#</th><th>Month</th><th>Bill No</th><th>Prev Reading</th><th>Prev Reading Date</th><th>Curr Reading</th><th>Curr Reading Date</th><th>Units</th><th>Rate (₹)</th><th>Elec Charge</th><th>Water Charge</th></tr>',
+        rows: bills,
+        renderRow: (b, i) => {
+          const mtrDates = getMeterReadingDates(b, bills, tenant);
+          return `<tr>
+            <td>${i + 1}</td>
+            <td>${formatMonthReadable(b.billingMonth)}</td>
+            <td>${b.billNumber || '—'}</td>
+            <td>${b.previousMeterReading !== undefined && b.previousMeterReading !== null ? b.previousMeterReading : '—'}</td>
+            <td>${formatDDMMYYYY(mtrDates.prevDate) || '—'}</td>
+            <td>${b.currentMeterReading !== undefined && b.currentMeterReading !== null ? b.currentMeterReading : '—'}</td>
+            <td>${formatDDMMYYYY(mtrDates.currDate) || '—'}</td>
+            <td style="font-weight:700;">${b.electricityUnits || 0} u</td>
+            <td>₹${b.electricityRate || 0}</td>
+            <td style="font-weight:700;color:#4F46E5;">${fmt(b.electricityCharge)}</td>
+            <td>${fmt(b.waterCharge)}</td>
+          </tr>`;
+        },
+        footerHtml: `<tfoot><tr class="pdf-total-row"><td colspan="7" style="text-align:right;">TOTAL CONSUMPTION &amp; CHARGES →</td><td>${bills.reduce((s,b)=>s+(Number(b.electricityUnits)||0),0)} units</td><td>—</td><td>${fmt(bills.reduce((s,b)=>s+(Number(b.electricityCharge)||0),0))}</td><td>${fmt(bills.reduce((s,b)=>s+(Number(b.waterCharge)||0),0))}</td></tr></tfoot>`,
+        emptyHtml: '<p style="color:#6b7280;padding:4px 0;font-size:8px;">No electricity meter readings found.</p>',
+        titleHeight: 22,
+        headerHeight: 20,
+        rowHeight: 18,
+        footerHeight: 20
+      });
 
-          const isLastChunk = chunkIdx === billChunks.length - 1;
-          const footerHtml = isLastChunk ? `
-            <tfoot>
-              <tr class="pdf-total-row">
-                <td colspan="11" style="text-align:right;">TOTALS →</td>
-                <td>${fmt(fin.totalBilled)}</td>
-                <td>${fmt(fin.totalPaid)}</td>
-                <td>${fmt(fin.totalOutstanding)}</td>
-                <td></td>
-              </tr>
-            </tfoot>` : '';
+      // Section 4: Complete Bills History Table
+      paginator.addTable({
+        titleHtml: `<div class="pdf-section-title">4. Complete Bills History (${bills.length} bills)</div>`,
+        colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:9%;"><col style="width:7%;"><col style="width:7%;"><col style="width:7%;"><col style="width:7%;"><col style="width:8%;"><col style="width:8%;"><col style="width:6%;"><col style="width:6%;"><col style="width:7%;"><col style="width:7%;"><col style="width:7%;"><col style="width:7%;"><col style="width:6%;"></colgroup>',
+        tableHeaderHtml: '<tr><th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th><th>Rent</th><th>Electricity</th><th>Elec Charge</th><th>Water</th><th>Parking</th><th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th></tr>',
+        rows: bills,
+        renderRow: (b, i) => `<tr>
+          <td>${i + 1}</td>
+          <td>${b.billNumber || '—'}</td>
+          <td>${b.billingMonth || '—'}</td>
+          <td>${formatDDMMYYYY(b.createdAt || getBillDate(b))}</td>
+          <td>${formatDDMMYYYY(b.dueDate)}</td>
+          <td>${fmt(b.rent)}</td>
+          <td>${b.electricityUnits || 0} u</td>
+          <td>${fmt(b.electricityCharge)}</td>
+          <td>${fmt(b.waterCharge)}</td>
+          <td>${fmt(b.parkingCharge)}</td>
+          <td>${fmt(b.previousDue)}</td>
+          <td>${fmt(b.totalAmount)}</td>
+          <td>${fmt(b.paidAmount)}</td>
+          <td>${fmt(b.remainingAmount)}</td>
+          <td>${statusBadge(b)}</td>
+        </tr>`,
+        footerHtml: `<tfoot><tr class="pdf-total-row"><td colspan="11" style="text-align:right;">TOTALS →</td><td>${fmt(fin.totalBilled)}</td><td>${fmt(fin.totalPaid)}</td><td>${fmt(fin.totalOutstanding)}</td><td></td></tr></tfoot>`,
+        emptyHtml: '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No bills on record for this tenancy.</p>',
+        titleHeight: 22,
+        headerHeight: 20,
+        rowHeight: 18,
+        footerHeight: 20
+      });
 
-          const isFirstPageOfBills = chunkIdx === 0;
-          const needsBreak = (isFirstPageOfBills && breakBeforeVacBills) || (!isFirstPageOfBills);
-
-          page2Html += `
-            ${needsBreak ? `<div class="html2pdf__page-break pdf-page-break"></div>${miniHeader(isFirstPageOfBills ? 'Bills History' : `Bills History (Page ${chunkIdx + 1})`)}` : ''}
-            <div>
-              <div class="pdf-section-title">4. Complete Bills History (${bills.length} bills)${chunkIdx > 0 ? ` &nbsp;—&nbsp; Continued (Page ${chunkIdx + 1})` : ''}</div>
-              <table class="pdf-table">
-                <colgroup>
-                  <col style="width:3%;">
-                  <col style="width:9%;">
-                  <col style="width:7%;">
-                  <col style="width:7%;">
-                  <col style="width:7%;">
-                  <col style="width:7%;">
-                  <col style="width:8%;">
-                  <col style="width:8%;">
-                  <col style="width:6%;">
-                  <col style="width:6%;">
-                  <col style="width:7%;">
-                  <col style="width:7%;">
-                  <col style="width:7%;">
-                  <col style="width:7%;">
-                  <col style="width:6%;">
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>#</th><th>Bill No.</th><th>Month</th><th>Issue Date</th><th>Due Date</th>
-                    <th>Rent</th><th>Electricity</th><th>Elec Charge</th><th>Water</th><th>Parking</th>
-                    <th>Prev Due</th><th>Total</th><th>Paid</th><th>Remaining</th><th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>${rowsHtml}</tbody>
-                ${footerHtml}
-              </table>
-            </div>
-          `;
-        });
-      }
-
-      // Page 3: Payments & Settlement Transactions
-      let page3Html = `
-        <div class="html2pdf__page-break pdf-page-break"></div>
-        ${miniHeader('Payment History & Settlement')}
-        <div class="pdf-section-title">5. Complete Payment Transactions (${payments.length} transaction${payments.length !== 1 ? 's' : ''})</div>
-      `;
-
-      if (payments.length === 0) {
-        page3Html += '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No payments recorded for this tenant.</p>';
-      } else {
-        let paymentsTableRows = '';
-        payments.forEach((p, i) => {
+      // Section 5: Complete Payment Transactions Table
+      paginator.addTable({
+        titleHtml: `<div class="pdf-section-title">5. Complete Payment Transactions (${payments.length} transaction${payments.length !== 1 ? 's' : ''})</div>`,
+        colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:9%;"><col style="width:6%;"><col style="width:11%;"><col style="width:10%;"><col style="width:17%;"><col style="width:44%;"></colgroup>',
+        tableHeaderHtml: '<tr><th>#</th><th>Date</th><th>Time</th><th>Amount</th><th>Mode</th><th>Transaction ID</th><th>Payment Received Against</th></tr>',
+        rows: payments,
+        renderRow: (p, i) => {
           const dateStr = p.paymentDate || (p.createdAt ? p.createdAt.split('T')[0] : '');
           const timeStr = p.createdAt ? (p.createdAt.split('T')[1]?.slice(0, 5) || '—') : '—';
           let allocationSummary = '—';
@@ -4575,8 +4390,7 @@
             const associatedBill = bills.find(b => b.id === p.billId);
             allocationSummary = associatedBill ? `${associatedBill.billingMonth || ''} ${associatedBill.billNumber}` : (p.billId === 'advance' ? 'Advance Rent' : p.billId || 'Direct Payment');
           }
-
-          paymentsTableRows += `<tr>
+          return `<tr>
             <td>${i + 1}</td>
             <td>${formatDDMMYYYY(dateStr)}</td>
             <td>${timeStr}</td>
@@ -4585,42 +4399,23 @@
             <td style="font-family:monospace;font-size:7.5px;">${p.transactionId || p.referenceId || '—'}</td>
             <td>${allocationSummary}</td>
           </tr>`;
-        });
+        },
+        footerHtml: `<tfoot><tr class="pdf-total-row"><td colspan="3" style="text-align:right;">TOTAL RECEIVED →</td><td>${fmt(fin.totalPaid)}</td><td colspan="3"></td></tr></tfoot>`,
+        emptyHtml: '<p style="color:#6b7280;padding:6px 0;font-size:8.5px;">No payments recorded for this tenant.</p>',
+        titleHeight: 22,
+        headerHeight: 20,
+        rowHeight: 18,
+        footerHeight: 20
+      });
 
-        page3Html += `
-          <table class="pdf-table">
-            <colgroup>
-              <col style="width:3%;">
-              <col style="width:9%;">
-              <col style="width:6%;">
-              <col style="width:11%;">
-              <col style="width:10%;">
-              <col style="width:17%;">
-              <col style="width:44%;">
-            </colgroup>
-            <thead>
-              <tr>
-                <th>#</th><th>Date</th><th>Time</th><th>Amount</th><th>Mode</th><th>Transaction ID</th><th>Payment Received Against</th>
-              </tr>
-            </thead>
-            <tbody>${paymentsTableRows}</tbody>
-            <tfoot>
-              <tr class="pdf-total-row">
-                <td colspan="3" style="text-align:right;">TOTAL RECEIVED →</td>
-                <td>${fmt(fin.totalPaid)}</td>
-                <td colspan="3"></td>
-              </tr>
-            </tfoot>
-          </table>
-        `;
-      }
-
-      // Settlement Transactions if any
-      let txTableHtml = '';
+      // Section 6: Settlement Transaction History (if any)
       if (Array.isArray(settlement.transactions) && settlement.transactions.length > 0) {
-        let txRows = '';
-        settlement.transactions.forEach((tx, idx) => {
-          txRows += `<tr>
+        paginator.addTable({
+          titleHtml: `<div class="pdf-section-title">6. Settlement Transaction History (${settlement.transactions.length} entries)</div>`,
+          colgroupHtml: '<colgroup><col style="width:3%;"><col style="width:14%;"><col style="width:12%;"><col style="width:11%;"><col style="width:11%;"><col style="width:19%;"><col style="width:30%;"></colgroup>',
+          tableHeaderHtml: '<tr><th>#</th><th>Date &amp; Time</th><th>Type</th><th>Amount</th><th>Method</th><th>Reference ID</th><th>Notes</th></tr>',
+          rows: settlement.transactions,
+          renderRow: (tx, idx) => `<tr>
             <td>${idx + 1}</td>
             <td>${fmtDateTime(tx.date || tx.createdAt)}</td>
             <td><strong style="color:${tx.type === 'refund' ? '#059669' : '#2563eb'}">${tx.type === 'refund' ? 'Refund Paid' : 'Payment Received'}</strong></td>
@@ -4628,53 +4423,38 @@
             <td>${paymentMethodLabel(tx.paymentMethod)}</td>
             <td style="font-family:monospace;font-size:7.5px;">${tx.referenceId || '—'}</td>
             <td>${tx.notes || '—'}</td>
-          </tr>`;
+          </tr>`,
+          titleHeight: 22,
+          headerHeight: 20,
+          rowHeight: 18
         });
-        txTableHtml = `
-          <div class="pdf-section-title">6. Settlement Transaction History</div>
-          <table class="pdf-table">
-            <colgroup>
-              <col style="width:3%;">
-              <col style="width:14%;">
-              <col style="width:12%;">
-              <col style="width:11%;">
-              <col style="width:11%;">
-              <col style="width:19%;">
-              <col style="width:30%;">
-            </colgroup>
-            <thead><tr><th>#</th><th>Date &amp; Time</th><th>Type</th><th>Amount</th><th>Method</th><th>Reference ID</th><th>Notes</th></tr></thead>
-            <tbody>${txRows}</tbody>
-          </table>
-        `;
       }
 
-      contentHtml = `
-        ${page1Html}
-        ${page2Html}
-        ${page3Html}
-        ${txTableHtml}
-        <!-- Footer -->
+      // Footer
+      paginator.addBlock(35, `
         <div style="margin-top:14px;border-top:1px solid #e5e7eb;padding-top:8px;font-size:8px;color:#9ca3af;text-align:center;">
           Generated by Rentora Cloud Platform &nbsp;|&nbsp; Landlord: ${ownerName} &nbsp;|&nbsp; ${fmtDateTime(new Date().toISOString())}
           <br>This report is generated for landlord use only. Tenant financial data is protected by a 30-day access window from settlement date.
         </div>
-      `;
+      `);
     }
+
+    const contentHtml = paginator.compileHtml();
 
     // Create temporary offscreen container for html2pdf
     const container = document.createElement('div');
     container.id = 'rentora-pdf-temp-container';
-    container.style.position = 'fixed';
+    container.style.position = 'absolute';
     container.style.top = '0';
     container.style.left = '0';
     container.style.width = '1060px';
-    container.style.minHeight = '750px';
+    container.style.height = 'auto';
+    container.style.minHeight = '0';
     container.style.zIndex = '-99999';
     container.style.backgroundColor = '#ffffff';
     container.style.opacity = '1';
     container.style.visibility = 'visible';
     container.style.pointerEvents = 'none';
-    container.style.overflow = 'hidden';
     container.style.boxSizing = 'border-box';
     container.style.margin = '0';
     container.style.padding = '0';
@@ -4714,8 +4494,7 @@
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
         pagebreak: {
-          mode: ['css', 'legacy'],
-          before: '.pdf-page-break',
+          mode: ['css'],
           avoid: ['tr', '.pdf-grid-table', '.pdf-header', '.pdf-mini-header', '.pdf-section-title']
         }
       };
