@@ -662,7 +662,7 @@
     state.activeProperty = state.properties[0];
     state.units = [...DEMO_FIXTURES.units];
     state.tenants = [...DEMO_FIXTURES.tenants];
-    state.bills = [...DEMO_FIXTURES.bills];
+    state.bills = decorateAllBillsByTenant([...DEMO_FIXTURES.bills]);
     state.payments = [...DEMO_FIXTURES.payments];
     state.settlements = [...DEMO_FIXTURES.settlements];
     state.settings = { ...DEMO_FIXTURES.settings };
@@ -803,7 +803,7 @@
         .where('ownerId', '==', ownerId)
         .onSnapshot(snapshot => {
           const rawBills = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          state.bills = decorateWebBills(rawBills);
+          state.bills = decorateAllBillsByTenant(rawBills);
           renderAllPortalData();
         }, err => console.error('Bills sync error:', err));
       state.unsubscribeListeners.push(unsubBills);
@@ -3460,12 +3460,32 @@
     });
   }
 
+  function decorateAllBillsByTenant(bills) {
+    if (!Array.isArray(bills) || bills.length === 0) return [];
+    const billsByTenant = {};
+    bills.forEach(b => {
+      if (!b) return;
+      const tId = b.tenantId || 'unknown';
+      if (!billsByTenant[tId]) billsByTenant[tId] = [];
+      billsByTenant[tId].push(b);
+    });
+    const decorated = [];
+    Object.keys(billsByTenant).forEach(tId => {
+      decorated.push(...decorateWebBills(billsByTenant[tId]));
+    });
+    return decorated;
+  }
+
   function calculateTenantOutstanding(tenantBills) {
     if (!Array.isArray(tenantBills) || tenantBills.length === 0) return 0;
     const decorated = decorateWebBills(tenantBills);
     const latest = decorated[decorated.length - 1];
     return latest ? Number(latest.remainingAmount || 0) : 0;
   }
+
+  window.decorateWebBills = decorateWebBills;
+  window.decorateAllBillsByTenant = decorateAllBillsByTenant;
+  window.calculateTenantOutstanding = calculateTenantOutstanding;
 
   // ==========================================================================
   // PROPERTY FULL DETAILS MODAL
@@ -5557,8 +5577,19 @@ _Generated via Rentora Platform._`);
   };
 
   window.openRecordPaymentModal = function (preselectedTarget) {
-    const pendingBills = state.bills.filter(b => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid');
     const select = document.getElementById('paymentSelectBill');
+    if (!select) return;
+
+    // Reset double submission guard
+    window._isRecordingPayment = false;
+    const btn = document.getElementById('recordPaymentSubmitBtn');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Confirm Payment Received';
+    }
+
+    const pendingBills = state.bills.filter(b => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid');
+    const activeTenants = state.tenants.filter(t => t.status === 'active' || !t.status);
 
     let isTenantTarget = false;
     let targetTenantId = null;
@@ -5583,24 +5614,49 @@ _Generated via Rentora Platform._`);
         </option>
       `;
 
-      document.getElementById('paymentAmount').value = totalOutstanding > 0 ? totalOutstanding : (tenant.rent || 0);
+      document.getElementById('paymentAmount').value = totalOutstanding > 0 ? totalOutstanding : (Number(tenant.rent) || 0);
     } else {
-      if (pendingBills.length === 0) {
-        showToast('All bills are fully settled! No pending dues.', 'info');
+      if (pendingBills.length === 0 && activeTenants.length === 0) {
+        showToast('No active tenants or bills available to record payment.', 'info');
         return;
       }
 
-      select.innerHTML = pendingBills.map(b => {
-        const tenant = state.tenants.find(t => t.id === b.tenantId);
-        const tName = b.tenantName || (tenant ? tenant.name : 'Tenant');
-        return `
-          <option value="${b.id}" data-due="${b.remainingAmount || 0}" data-tenant="${b.tenantId}">
-            ${b.billNumber || 'Bill'} - ${tName} (Unit ${b.unitNumber}) - Due: ₹${Number(b.remainingAmount || 0).toLocaleString('en-IN')}
-          </option>
-        `;
-      }).join('');
+      let optionsHtml = '';
 
-      if (preselectedTarget && pendingBills.some(b => b.id === preselectedTarget)) {
+      if (pendingBills.length > 0) {
+        optionsHtml += `<optgroup label="Pending Bills / Invoices">` +
+          pendingBills.map(b => {
+            const tenant = state.tenants.find(t => t.id === b.tenantId);
+            const tName = b.tenantName || (tenant ? tenant.name : 'Tenant');
+            const dueAmt = Number(b.remainingAmount !== undefined ? b.remainingAmount : (b.totalAmount || 0));
+            return `
+              <option value="${b.id}" data-due="${dueAmt}" data-tenant="${b.tenantId}">
+                ${b.billNumber || 'Bill'} - ${tName} (Unit ${b.unitNumber || 'N/A'}) - Due: ₹${dueAmt.toLocaleString('en-IN')}
+              </option>
+            `;
+          }).join('') +
+        `</optgroup>`;
+      }
+
+      if (activeTenants.length > 0) {
+        optionsHtml += `<optgroup label="Tenant Direct / Advance / All Bills Payment">` +
+          activeTenants.map(t => {
+            const tenantBills = state.bills.filter(b => b.tenantId === t.id);
+            const totalOutstanding = calculateTenantOutstanding(tenantBills);
+            const unit = state.units.find(u => u.id === t.unitId);
+            const unitLabel = unit ? `Unit ${unit.unitNumber}` : (t.roomNumber ? `Unit ${t.roomNumber}` : '');
+            return `
+              <option value="tenant:${t.id}" data-due="${totalOutstanding}" data-tenant="${t.id}">
+                ${t.name} ${unitLabel ? `(${unitLabel})` : ''} — Total Due: ₹${Number(totalOutstanding).toLocaleString('en-IN')}
+              </option>
+            `;
+          }).join('') +
+        `</optgroup>`;
+      }
+
+      select.innerHTML = optionsHtml;
+
+      if (preselectedTarget && (pendingBills.some(b => b.id === preselectedTarget) || activeTenants.some(t => `tenant:${t.id}` === preselectedTarget))) {
         select.value = preselectedTarget;
       }
 
@@ -5613,199 +5669,234 @@ _Generated via Rentora Platform._`);
     openModal('modalRecordPayment');
   };
 
-  window.handlePaymentBillSelect = function (billId) {
-    if (!billId) return;
-    if (billId.startsWith('tenant:')) {
-      const tId = billId.replace('tenant:', '');
+  window.handlePaymentBillSelect = function (targetId) {
+    if (!targetId) return;
+    const amountInput = document.getElementById('paymentAmount');
+    if (!amountInput) return;
+
+    if (targetId.startsWith('tenant:')) {
+      const tId = targetId.replace('tenant:', '');
       const tenant = state.tenants.find(t => t.id === tId);
       const tenantBills = state.bills.filter(b => b.tenantId === tId);
       const out = calculateTenantOutstanding(tenantBills);
-      document.getElementById('paymentAmount').value = out;
+      amountInput.value = out > 0 ? out : (tenant ? (Number(tenant.rent) || 0) : 0);
       return;
     }
-    const bill = state.bills.find(b => b.id === billId);
+
+    const bill = state.bills.find(b => b.id === targetId);
     if (bill) {
       const due = Number(bill.remainingAmount !== undefined ? bill.remainingAmount : (bill.totalAmount || 0));
-      document.getElementById('paymentAmount').value = due;
+      amountInput.value = due > 0 ? due : 0;
     }
   };
 
   window.handleRecordPayment = async function (e) {
-    e.preventDefault();
-    const btn = document.getElementById('recordPaymentSubmitBtn');
-    btn.disabled = true;
-    btn.textContent = 'Recording Payment...';
+    if (e && e.preventDefault) e.preventDefault();
 
+    if (window._isRecordingPayment) {
+      return;
+    }
+
+    const btn = document.getElementById('recordPaymentSubmitBtn');
     const selectedTarget = document.getElementById('paymentSelectBill').value;
     const amount = parseFloat(document.getElementById('paymentAmount').value) || 0;
     const paymentDate = document.getElementById('paymentDate').value || new Date().toISOString().split('T')[0];
     const paymentMethod = document.getElementById('paymentMethod').value;
-    const txnId = (document.getElementById('paymentTxnId').value.trim()) || ('PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9));
+    const userTxnId = (document.getElementById('paymentTxnId').value || '').trim();
 
     if (amount <= 0) {
       showToast('Payment amount must be greater than zero!', 'error');
-      btn.disabled = false;
-      btn.textContent = 'Confirm Payment Received';
       return;
     }
 
-    // Identify target tenant
-    let tenant = null;
-    let targetPropertyId = state.activeProperty ? state.activeProperty.id : '';
-    let targetUnitId = '';
+    window._isRecordingPayment = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Recording Payment...';
+    }
 
-    if (selectedTarget && selectedTarget.startsWith('tenant:')) {
-      const tId = selectedTarget.replace('tenant:', '');
-      tenant = state.tenants.find(t => t.id === tId);
-    } else if (selectedTarget) {
-      const selectedBill = state.bills.find(b => b.id === selectedTarget);
-      if (selectedBill) {
-        tenant = state.tenants.find(t => t.id === selectedBill.tenantId);
-        targetPropertyId = selectedBill.propertyId || targetPropertyId;
-        targetUnitId = selectedBill.unitId || targetUnitId;
+    try {
+      // Transaction ID generation (1:1 with Mobile App paymentService)
+      const parentPaymentId = userTxnId && userTxnId.startsWith('PAY-')
+        ? userTxnId
+        : 'PAY-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+      const txnId = userTxnId || parentPaymentId;
+      const nowIso = new Date().toISOString();
+
+      // Identify target tenant
+      let tenant = null;
+      let targetPropertyId = state.activeProperty ? state.activeProperty.id : '';
+      let targetUnitId = '';
+
+      if (selectedTarget && selectedTarget.startsWith('tenant:')) {
+        const tId = selectedTarget.replace('tenant:', '');
+        tenant = state.tenants.find(t => t.id === tId);
+      } else if (selectedTarget) {
+        const selectedBill = state.bills.find(b => b.id === selectedTarget);
+        if (selectedBill) {
+          tenant = state.tenants.find(t => t.id === selectedBill.tenantId);
+          targetPropertyId = selectedBill.propertyId || targetPropertyId;
+          targetUnitId = selectedBill.unitId || targetUnitId;
+        }
       }
-    }
 
-    if (!tenant) {
-      showToast('Tenant not found for payment!', 'error');
-      btn.disabled = false;
-      btn.textContent = 'Confirm Payment Received';
-      return;
-    }
+      if (!tenant) {
+        showToast('Tenant not found for payment!', 'error');
+        return;
+      }
 
-    targetPropertyId = tenant.propertyId || targetPropertyId;
-    targetUnitId = tenant.unitId || targetUnitId;
-    const nowIso = new Date().toISOString();
+      targetPropertyId = targetPropertyId || tenant.propertyId || (state.activeProperty ? state.activeProperty.id : '');
+      targetUnitId = targetUnitId || tenant.unitId || '';
 
-    // 1. Fetch & decorate tenant's bills chronologically oldest-first
-    const tenantBills = state.bills.filter(b => b.tenantId === tenant.id);
-    const sortedBills = sortBillsChronological(tenantBills);
-    const decoratedBills = decorateWebBills(sortedBills);
+      // 1. Fetch & decorate tenant's bills chronologically oldest-first
+      const tenantBills = state.bills.filter(b => b.tenantId === tenant.id);
+      const sortedBills = sortBillsChronological(tenantBills.map(b => ({ ...b })));
+      const decoratedBills = decorateWebBills(sortedBills);
 
-    // Filter outstanding bills
-    const outstandingBills = decoratedBills.filter(b => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid');
+      // Filter outstanding bills
+      const outstandingBills = sortBillsChronological(
+        decoratedBills.filter(b => (Number(b.remainingAmount) || 0) > 0 || b.paymentStatus !== 'paid')
+      );
 
-    let remainingPayment = amount;
-    const allocations = [];
+      let remainingPayment = amount;
+      const allocations = [];
 
-    // 2. Sequentially allocate to oldest outstanding bills first
-    for (const b of outstandingBills) {
-      if (remainingPayment <= 0) break;
-      const isFirstTenantBill = sortedBills.length > 0 && b.id === sortedBills[0].id;
-      const capacity = isFirstTenantBill ? Number(b.totalAmount || b.subtotal) : Number(b.subtotal);
-      const needed = Math.max(0, capacity - (Number(b.paidAmount) || 0));
-      if (needed <= 0) continue;
+      // 2. Sequentially allocate to oldest outstanding bills first
+      for (const b of outstandingBills) {
+        if (remainingPayment <= 0) break;
+        const isFirstTenantBill = sortedBills.length > 0 && b.id === sortedBills[0].id;
+        const capacity = isFirstTenantBill ? Number(b.totalAmount || b.subtotal) : Number(b.subtotal);
+        const needed = Math.max(0, capacity - (Number(b.paidAmount) || 0));
+        if (needed <= 0) continue;
 
-      const allocatedAmount = Math.min(remainingPayment, needed);
-      const currentPaid = Number(b.paidAmount) || 0;
-      const newPaidAmount = currentPaid + allocatedAmount;
+        const allocatedAmount = Math.min(remainingPayment, needed);
+        const currentPaid = Number(b.paidAmount) || 0;
+        const newPaidAmount = currentPaid + allocatedAmount;
 
-      b.paidAmount = newPaidAmount;
+        // CRITICAL FIX: Update the actual bill in sortedBills!
+        const targetBill = sortedBills.find(sb => sb.id === b.id);
+        if (targetBill) {
+          targetBill.paidAmount = newPaidAmount;
+        }
+        b.paidAmount = newPaidAmount;
 
-      allocations.push({
+        allocations.push({
+          transactionId: txnId,
+          billId: b.id,
+          billNumber: b.billNumber,
+          billingMonth: b.billingMonth,
+          amount: allocatedAmount,
+          type: 'bill_due',
+          allocatedAt: nowIso
+        });
+
+        remainingPayment -= allocatedAmount;
+      }
+
+      // 3. Excess payment into advance rent
+      let newAdvanceAmount = Number(tenant.advanceAmount !== undefined ? tenant.advanceAmount : (tenant.advance || 0));
+      if (remainingPayment > 0) {
+        newAdvanceAmount += remainingPayment;
+        allocations.push({
+          transactionId: txnId,
+          billId: 'advance',
+          amount: remainingPayment,
+          type: 'advance',
+          allocatedAt: nowIso
+        });
+      }
+
+      // 4. Create Master Payment Transaction Record (1:1 with Mobile App)
+      const paymentRecord = {
+        id: 'pay_' + Date.now(),
+        ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
+        billId: allocations.length === 1 ? allocations[0].billId : (allocations.length > 1 ? 'multiple' : (selectedTarget || 'direct')),
+        tenantId: tenant.id,
+        tenantAuthUid: tenant.tenantAuthUid || null,
+        propertyId: targetPropertyId,
+        unitId: targetUnitId,
+        amount: amount,
+        amountPaid: amount,
+        paymentDate: paymentDate,
+        paymentMethod: paymentMethod,
         transactionId: txnId,
-        billId: b.id,
-        billNumber: b.billNumber,
-        billingMonth: b.billingMonth,
-        amount: allocatedAmount,
-        type: 'bill_due',
-        allocatedAt: nowIso
-      });
+        status: 'approved',
+        verifiedAt: nowIso,
+        parentPaymentId,
+        allocations: allocations,
+        isSplitChild: false,
+        createdAt: nowIso
+      };
 
-      remainingPayment -= allocatedAmount;
-    }
+      // 5. Re-decorate all tenant bills to recompute exact figures
+      const redecorated = decorateWebBills(sortedBills);
 
-    // 3. Excess payment into advance rent
-    if (remainingPayment > 0) {
-      const currentAdvance = Number(tenant.advance || tenant.advanceAmount || 0);
-      const newAdvance = currentAdvance + remainingPayment;
-      tenant.advance = newAdvance;
-      tenant.advanceAmount = newAdvance;
-
-      allocations.push({
-        transactionId: txnId,
-        billId: 'advance',
-        amount: remainingPayment,
-        type: 'advance',
-        allocatedAt: nowIso
-      });
-    }
-
-    // 4. Create Master Payment Transaction Record
-    const parentPaymentId = txnId;
-    const paymentRecord = {
-      id: 'pay_' + Date.now(),
-      ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
-      billId: allocations.length === 1 ? allocations[0].billId : (allocations.length > 1 ? 'multiple' : (selectedTarget || 'direct')),
-      tenantId: tenant.id,
-      tenantAuthUid: tenant.tenantAuthUid || null,
-      propertyId: targetPropertyId,
-      unitId: targetUnitId,
-      amount: amount,
-      amountPaid: amount,
-      paymentDate: paymentDate,
-      paymentMethod: paymentMethod,
-      transactionId: txnId,
-      status: 'approved',
-      verifiedAt: nowIso,
-      parentPaymentId,
-      allocations: allocations,
-      isSplitChild: false,
-      createdAt: nowIso
-    };
-
-    // 5. Re-decorate all tenant bills to recompute exact figures
-    const redecorated = decorateWebBills(sortedBills);
-
-    // 6. Firestore Real-Time Persistence
-    if (state.currentUser && isFirebaseReady && fbDb) {
-      try {
-        const addedDoc = await fbDb.collection('payments').add(paymentRecord);
-        paymentRecord.id = addedDoc.id;
+      // 6. Firestore Real-Time Persistence (Atomic Batch)
+      if (state.currentUser && isFirebaseReady && fbDb) {
+        const batch = fbDb.batch();
+        const paymentDocRef = fbDb.collection('payments').doc();
+        paymentRecord.id = paymentDocRef.id;
+        batch.set(paymentDocRef, paymentRecord);
 
         for (const b of redecorated) {
-          await fbDb.collection('bills').doc(b.id).update({
-            paidAmount: b.paidAmount,
-            remainingAmount: b.remainingAmount,
-            paymentStatus: b.paymentStatus,
-            previousDuePaid: b.previousDuePaid,
-            previousDueRemaining: b.previousDueRemaining,
-            currentBillPaid: b.currentBillPaid,
-            currentBillRemaining: b.currentBillRemaining,
-            totalPaymentAllocated: b.totalPaymentAllocated,
+          const billDocRef = fbDb.collection('bills').doc(b.id);
+          batch.update(billDocRef, {
+            paidAmount: Number(b.paidAmount) || 0,
+            remainingAmount: Number(b.remainingAmount) || 0,
+            paymentStatus: b.paymentStatus || 'unpaid',
+            previousDuePaid: Number(b.previousDuePaid) || 0,
+            previousDueRemaining: Number(b.previousDueRemaining) || 0,
+            currentBillPaid: Number(b.currentBillPaid) || 0,
+            currentBillRemaining: Number(b.currentBillRemaining) || 0,
+            totalPaymentAllocated: Number(b.totalPaymentAllocated) || 0,
             updatedAt: nowIso
           });
         }
 
         if (remainingPayment > 0) {
-          await fbDb.collection('tenants').doc(tenant.id).update({
-            advanceAmount: tenant.advanceAmount,
+          const tenantDocRef = fbDb.collection('tenants').doc(tenant.id);
+          batch.update(tenantDocRef, {
+            advanceAmount: newAdvanceAmount,
+            advance: newAdvanceAmount,
             updatedAt: nowIso
           });
         }
-      } catch (err) {
-        console.error('Failed to sync payment to Firestore:', err);
-        showToast(`Failed to record payment: ${err.message}`, 'error');
+
+        await batch.commit();
+      }
+
+      // Update in-memory state
+      state.payments.unshift(paymentRecord);
+      for (const b of redecorated) {
+        const idx = state.bills.findIndex(item => item.id === b.id);
+        if (idx !== -1) {
+          state.bills[idx] = { ...state.bills[idx], ...b };
+        }
+      }
+      state.bills = decorateAllBillsByTenant(state.bills);
+
+      const tIdx = state.tenants.findIndex(t => t.id === tenant.id);
+      if (tIdx !== -1) {
+        state.tenants[tIdx] = {
+          ...state.tenants[tIdx],
+          advanceAmount: newAdvanceAmount,
+          advance: newAdvanceAmount
+        };
+      }
+
+      closeModal('modalRecordPayment');
+      renderAllPortalData();
+      showToast(`Payment of ₹${amount.toLocaleString('en-IN')} received and adjusted oldest-first!`, 'success');
+    } catch (err) {
+      console.error('Failed to record payment:', err);
+      showToast(`Failed to record payment: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
         btn.disabled = false;
         btn.textContent = 'Confirm Payment Received';
-        return;
       }
+      window._isRecordingPayment = false;
     }
-
-    // Update in-memory state
-    state.payments.unshift(paymentRecord);
-    for (const b of redecorated) {
-      const idx = state.bills.findIndex(item => item.id === b.id);
-      if (idx !== -1) {
-        state.bills[idx] = { ...state.bills[idx], ...b };
-      }
-    }
-
-    btn.disabled = false;
-    btn.textContent = 'Confirm Payment Received';
-    closeModal('modalRecordPayment');
-    renderAllPortalData();
-    showToast(`Payment of ₹${amount.toLocaleString('en-IN')} received and adjusted oldest-first!`, 'success');
   };
 
   window.deleteBill = async function (billId) {
@@ -5961,15 +6052,18 @@ _Generated via Rentora Platform._`);
     }, 3500);
   }
 
-  window.openModal = function (id) {
+  function openModal(id) {
     const modal = document.getElementById(id);
     if (modal) modal.classList.add('active');
-  };
+  }
 
-  window.closeModal = function (id) {
+  function closeModal(id) {
     const modal = document.getElementById(id);
     if (modal) modal.classList.remove('active');
-  };
+  }
+
+  window.openModal = openModal;
+  window.closeModal = closeModal;
 
   // ==========================================================================
   // 15. GLOBAL EVENT LISTENERS
