@@ -256,8 +256,16 @@
     }
   }
 
-  function getMeterReadingDates(bill, allBills, tenant) {
+  function getMeterReadingDates(bill, allBills, tenant, meterType = 'electricity') {
     if (!bill) return { prevDate: '', currDate: '' };
+
+    if (meterType === 'water') {
+      let currWaterDate = bill.currentWaterMeterReadingDate || '';
+      let prevWaterDate = bill.previousWaterMeterReadingDate || '';
+      if (!currWaterDate) currWaterDate = bill.currentMeterReadingDate || '';
+      if (!prevWaterDate) prevWaterDate = bill.previousMeterReadingDate || '';
+      return { prevDate: prevWaterDate, currDate: currWaterDate };
+    }
 
     // 1. Current Reading Date: check direct database fields
     let currDate = bill.currentMeterReadingDate ||

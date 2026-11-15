@@ -1911,7 +1911,7 @@
           <div class="input-row">
             <div class="form-group">
               <label class="form-label" for="billMonth">Billing Month (YYYY-MM) *</label>
-              <input type="month" id="billMonth" class="form-control" required>
+              <input type="month" id="billMonth" class="form-control" required onchange="handleBillMonthChange(this.value)">
             </div>
             <div class="form-group">
               <label class="form-label" for="billDueDate">Due Date *</label>
@@ -1919,39 +1919,105 @@
             </div>
           </div>
 
-          <div style="background: var(--bg-surface-elevated); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-            <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 12px; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
-              Submeter Electricity Calculation
+          <!-- Electricity Meter Calculation Card -->
+          <div style="background: var(--bg-surface-elevated); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 14px;">
+            <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 12px; color: var(--text-main); display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                Electricity Meter Reading &amp; Calculation
+              </div>
+              <span id="billElecDaysBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: rgba(59, 130, 246, 0.12); color: var(--primary);">0 Days</span>
             </div>
-            <div class="input-row">
+
+            <!-- Previous Reading Group -->
+            <div class="input-row" style="margin-bottom: 10px;">
               <div class="form-group">
                 <label class="form-label" for="billPrevReading">Previous Reading (Units) *</label>
                 <input type="number" id="billPrevReading" class="form-control" value="0" min="0" required oninput="calculateLiveBill()">
               </div>
               <div class="form-group">
+                <label class="form-label" for="billPrevReadingDate">Previous Reading Date (Auto) *</label>
+                <input type="date" id="billPrevReadingDate" class="form-control" style="background: var(--bg-surface);" onchange="calculateLiveBill()">
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 3px;">Auto-fetched from historical reading record</div>
+              </div>
+            </div>
+
+            <!-- Current Reading Group with Manual Date Picker -->
+            <div class="input-row">
+              <div class="form-group">
                 <label class="form-label" for="billCurrReading">Current Reading (Units) *</label>
                 <input type="number" id="billCurrReading" class="form-control" value="0" min="0" required oninput="calculateLiveBill()">
               </div>
               <div class="form-group">
+                <label class="form-label" for="billCurrReadingDate">Current Reading Date (Manual Picker) *</label>
+                <input type="date" id="billCurrReadingDate" class="form-control" required onchange="calculateLiveBill()">
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 3px;">Select actual date reading was taken</div>
+              </div>
+              <div class="form-group" style="max-width: 140px;">
                 <label class="form-label" for="billElecRate">Rate (₹/unit) *</label>
-                <input type="number" id="billElecRate" class="form-control" value="10" min="0" required oninput="calculateLiveBill()">
+                <input type="number" id="billElecRate" class="form-control" value="10" min="0" step="0.1" required oninput="calculateLiveBill()">
               </div>
             </div>
-            <div style="font-size: 0.84rem; color: var(--primary); font-weight: 600; text-align: right;" id="billElecPreviewText">
-              Units Consumed: 0 • Electricity Total: ₹0.00
+
+            <!-- Live Calculation & Validation Alert -->
+            <div style="font-size: 0.84rem; color: var(--primary); font-weight: 600; text-align: right; margin-top: 6px;" id="billElecPreviewText">
+              Units Consumed: 0 • Period: N/A • Electricity Total: ₹0.00
             </div>
+            <div id="billElecDateWarning" style="display: none; color: #ef4444; font-size: 0.8rem; font-weight: 600; text-align: right; margin-top: 3px;"></div>
           </div>
 
-          <div class="input-row">
-            <div class="form-group">
-              <label class="form-label" for="billRent">Monthly Rent (₹) *</label>
-              <input type="number" id="billRent" class="form-control" min="0" required oninput="calculateLiveBill()">
+          <!-- Water Meter & Charges Card -->
+          <div style="background: var(--bg-surface-elevated); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 14px;">
+            <div style="font-weight: 700; font-size: 0.92rem; margin-bottom: 12px; color: var(--text-main); display: flex; align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+                Water Charges &amp; Meter Reading
+              </div>
+              <span id="billWaterTypeBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; background: rgba(16, 185, 129, 0.12); color: #10b981;">Fixed</span>
             </div>
-            <div class="form-group">
-              <label class="form-label" for="billWater">Water Charge (₹)</label>
+
+            <div id="billWaterMeterSection" style="display: none;">
+              <div class="input-row" style="margin-bottom: 10px;">
+                <div class="form-group">
+                  <label class="form-label" for="billPrevWaterReading">Previous Water Reading (Units)</label>
+                  <input type="number" id="billPrevWaterReading" class="form-control" value="0" min="0" oninput="calculateLiveBill()">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="billPrevWaterReadingDate">Previous Water Reading Date (Auto)</label>
+                  <input type="date" id="billPrevWaterReadingDate" class="form-control" style="background: var(--bg-surface);" onchange="calculateLiveBill()">
+                </div>
+              </div>
+
+              <div class="input-row">
+                <div class="form-group">
+                  <label class="form-label" for="billCurrWaterReading">Current Water Reading (Units)</label>
+                  <input type="number" id="billCurrWaterReading" class="form-control" value="0" min="0" oninput="calculateLiveBill()">
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="billCurrWaterReadingDate">Current Water Reading Date (Manual)</label>
+                  <input type="date" id="billCurrWaterReadingDate" class="form-control" onchange="calculateLiveBill()">
+                </div>
+                <div class="form-group" style="max-width: 140px;">
+                  <label class="form-label" for="billWaterRate">Water Rate (₹/unit)</label>
+                  <input type="number" id="billWaterRate" class="form-control" value="0" min="0" step="0.1" oninput="calculateLiveBill()">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group" id="billWaterFixedGroup">
+              <label class="form-label" for="billWater">Water Charge (₹) *</label>
               <input type="number" id="billWater" class="form-control" value="0" min="0" oninput="calculateLiveBill()">
             </div>
+
+            <div style="font-size: 0.84rem; color: #10b981; font-weight: 600; text-align: right; margin-top: 4px;" id="billWaterPreviewText">
+              Water Total: ₹0.00
+            </div>
+            <div id="billWaterDateWarning" style="display: none; color: #ef4444; font-size: 0.8rem; font-weight: 600; text-align: right; margin-top: 3px;"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="billRent">Monthly Rent (₹) *</label>
+            <input type="number" id="billRent" class="form-control" min="0" required oninput="calculateLiveBill()">
           </div>
 
           <div class="input-row">

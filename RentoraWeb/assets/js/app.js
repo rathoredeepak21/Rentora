@@ -3486,6 +3486,11 @@
   window.decorateWebBills = decorateWebBills;
   window.decorateAllBillsByTenant = decorateAllBillsByTenant;
   window.calculateTenantOutstanding = calculateTenantOutstanding;
+  window.getChronologicalPreviousReading = getChronologicalPreviousReading;
+  window.getDefaultCurrentReadingDate = getDefaultCurrentReadingDate;
+  window.refreshBillMeterReadings = refreshBillMeterReadings;
+  window.calculateMeterDays = calculateMeterDays;
+  window.buildMobileBillPdfData = buildMobileBillPdfData;
 
   // ==========================================================================
   // PROPERTY FULL DETAILS MODAL
@@ -3914,24 +3919,158 @@
     window.handleBillUnitChange(unitSelect.value);
   };
 
+  // ==========================================================================
+  // CHRONOLOGICAL METER READING HISTORY & PREVIOUS READING RESOLUTION
+  // ==========================================================================
+  function getChronologicalPreviousReading(tenant, unitId, targetBillingMonth, targetReadingDate, meterType = 'electricity') {
+    if (!tenant) return { reading: 0, date: '', source: 'none' };
+
+    const tenantBills = (state.bills || []).filter(b => b.tenantId === tenant.id);
+
+    // Filter bills strictly preceding the target billing month and/or date
+    const precedingBills = tenantBills.filter(b => {
+      const bMonth = (b.billingMonth || '').trim();
+      const bDate = meterType === 'water'
+        ? (b.currentWaterMeterReadingDate || b.currentMeterReadingDate || (b.createdAt ? b.createdAt.split('T')[0] : ''))
+        : (b.currentMeterReadingDate || (b.createdAt ? b.createdAt.split('T')[0] : ''));
+
+      // If targetBillingMonth is provided, bill must be strictly prior month
+      if (targetBillingMonth && bMonth) {
+        if (bMonth >= targetBillingMonth) return false;
+      }
+      // If targetReadingDate is provided, bill date must be strictly prior date
+      if (targetReadingDate && bDate) {
+        if (bDate >= targetReadingDate) return false;
+      }
+      return true;
+    });
+
+    if (precedingBills.length > 0) {
+      // Sort preceding bills chronologically descending to get the immediately preceding one
+      precedingBills.sort((a, b) => {
+        const monthA = a.billingMonth || '';
+        const monthB = b.billingMonth || '';
+        if (monthA !== monthB) return monthB.localeCompare(monthA);
+        const dateA = a.currentMeterReadingDate || (a.createdAt ? a.createdAt.split('T')[0] : '');
+        const dateB = b.currentMeterReadingDate || (b.createdAt ? b.createdAt.split('T')[0] : '');
+        return dateB.localeCompare(dateA);
+      });
+
+      const latestPrior = precedingBills[0];
+      if (meterType === 'water') {
+        const reading = latestPrior.currentWaterMeterReading !== undefined
+          ? Number(latestPrior.currentWaterMeterReading)
+          : (latestPrior.waterUnits !== undefined ? Number(latestPrior.waterUnits) : Number(latestPrior.currentMeterReading || 0));
+        const date = latestPrior.currentWaterMeterReadingDate || latestPrior.currentMeterReadingDate || (latestPrior.createdAt ? latestPrior.createdAt.split('T')[0] : '');
+        return { reading, date, source: 'bill', billId: latestPrior.id, billMonth: latestPrior.billingMonth };
+      } else {
+        const reading = Number(latestPrior.currentMeterReading !== undefined ? latestPrior.currentMeterReading : (latestPrior.previousMeterReading || 0));
+        const date = latestPrior.currentMeterReadingDate || (latestPrior.createdAt ? latestPrior.createdAt.split('T')[0] : '');
+        return { reading, date, source: 'bill', billId: latestPrior.id, billMonth: latestPrior.billingMonth };
+      }
+    }
+
+    // Baseline fallback to tenant move-in initial meter reading
+    const moveInDate = tenant.moveInDate || tenant.moveIn || '';
+    if (meterType === 'water') {
+      const reading = Number(tenant.initialWaterMeter || tenant.initialWaterMeterReading || 0);
+      return { reading, date: moveInDate, source: 'tenant_initial' };
+    } else {
+      const reading = Number(tenant.initialMeter || tenant.initialMeterReading || 0);
+      return { reading, date: moveInDate, source: 'tenant_initial' };
+    }
+  }
+
+  function getDefaultCurrentReadingDate(billingMonth, prevReadingDate) {
+    if (!billingMonth) return '';
+    const parts = billingMonth.split('-');
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10);
+    if (!year || !month) return '';
+
+    let day = 15;
+    if (prevReadingDate && typeof prevReadingDate === 'string') {
+      const prevParts = prevReadingDate.split('-');
+      if (prevParts.length === 3) {
+        const pDay = parseInt(prevParts[2], 10);
+        if (pDay >= 1 && pDay <= 31) day = pDay;
+      }
+    }
+
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const targetDay = Math.min(day, daysInMonth);
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+
+    // Only default to today's date if billing month is current year & current month
+    if (year === currentYear && month === currentMonth) {
+      return now.toISOString().split('T')[0];
+    }
+
+    // For past historical months (e.g. Aug 2026), NEVER force today's date!
+    return `${parts[0]}-${parts[1].padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+  }
+
+  function refreshBillMeterReadings(unitId, billingMonth) {
+    const unit = state.units.find(u => u.id === unitId);
+    if (!unit) return;
+    const tenant = state.tenants.find(t => t.id === unit.currentTenantId || t.unitId === unit.id);
+    if (!tenant) return;
+
+    // 1. Electricity chronological previous reading & date
+    const elecPrev = getChronologicalPreviousReading(tenant, unitId, billingMonth, null, 'electricity');
+    const elPrevReading = document.getElementById('billPrevReading');
+    const elPrevDate = document.getElementById('billPrevReadingDate');
+    const elCurrReading = document.getElementById('billCurrReading');
+    const elCurrDate = document.getElementById('billCurrReadingDate');
+
+    if (elPrevReading) elPrevReading.value = elecPrev.reading;
+    if (elPrevDate) elPrevDate.value = elecPrev.date ? elecPrev.date.split('T')[0] : '';
+
+    const defaultCurrDate = getDefaultCurrentReadingDate(billingMonth, elecPrev.date);
+    if (elCurrDate) elCurrDate.value = defaultCurrDate;
+    if (elCurrReading && (!elCurrReading.value || Number(elCurrReading.value) < elecPrev.reading)) {
+      elCurrReading.value = elecPrev.reading;
+    }
+
+    // 2. Water chronological previous reading & date
+    const waterPrev = getChronologicalPreviousReading(tenant, unitId, billingMonth, null, 'water');
+    const elWaterPrev = document.getElementById('billPrevWaterReading');
+    const elWaterPrevDate = document.getElementById('billPrevWaterReadingDate');
+    const elWaterCurr = document.getElementById('billCurrWaterReading');
+    const elWaterCurrDate = document.getElementById('billCurrWaterReadingDate');
+    const elWaterRate = document.getElementById('billWaterRate');
+
+    if (elWaterPrev) elWaterPrev.value = waterPrev.reading;
+    if (elWaterPrevDate) elWaterPrevDate.value = waterPrev.date ? waterPrev.date.split('T')[0] : '';
+    if (elWaterCurrDate) elWaterCurrDate.value = defaultCurrDate;
+    if (elWaterCurr && (!elWaterCurr.value || Number(elWaterCurr.value) < waterPrev.reading)) {
+      elWaterCurr.value = waterPrev.reading;
+    }
+    if (elWaterRate && tenant.waterRatePerUnit != null) {
+      elWaterRate.value = tenant.waterRatePerUnit;
+    }
+
+    calculateLiveBill();
+  }
+
+  window.handleBillMonthChange = function (billingMonth) {
+    const unitId = document.getElementById('billUnitSelect')?.value;
+    if (!unitId || !billingMonth) return;
+    refreshBillMeterReadings(unitId, billingMonth);
+  };
+
   window.handleBillUnitChange = function (unitId) {
     const unit = state.units.find(u => u.id === unitId);
     if (!unit) return;
 
     const tenant = state.tenants.find(t => t.id === unit.currentTenantId || t.unitId === unit.id);
     const prop = state.properties.find(p => p.id === unit.propertyId);
+    const billingMonth = document.getElementById('billMonth')?.value || '';
 
-    let prevReading = tenant ? Number(tenant.initialMeter || tenant.initialMeterReading || 0) : 0;
-    const unitBills = state.bills.filter(b => b.unitId === unitId && b.tenantId === (tenant ? tenant.id : ''));
-    if (unitBills.length > 0) {
-      const sortedBills = [...unitBills].sort((a, b) => (b.billingMonth || '').localeCompare(a.billingMonth || ''));
-      if (sortedBills[0].currentMeterReading) {
-        prevReading = Number(sortedBills[0].currentMeterReading);
-      }
-    }
-
-    document.getElementById('billPrevReading').value = prevReading;
-    document.getElementById('billCurrReading').value = prevReading;
+    refreshBillMeterReadings(unitId, billingMonth);
 
     const elecRate = (tenant && tenant.electricityRatePerUnit != null) ? tenant.electricityRatePerUnit : ((prop && prop.electricityRate) || 10);
     document.getElementById('billElecRate').value = elecRate;
@@ -3961,17 +4100,37 @@
     calculateLiveBill();
   };
 
-  window.calculateLiveBill = function () {
+  function calculateLiveBill() {
     const unitId = document.getElementById('billUnitSelect')?.value;
     const unit = state.units.find(u => u.id === unitId);
     const tenant = unit ? state.tenants.find(t => t.id === unit.currentTenantId || t.unitId === unit.id) : null;
+    const prop = unit ? state.properties.find(p => p.id === unit.propertyId) : null;
 
-    const prev = parseFloat(document.getElementById('billPrevReading').value) || 0;
-    const curr = parseFloat(document.getElementById('billCurrReading').value) || 0;
-    const rate = parseFloat(document.getElementById('billElecRate').value) || 0;
+    // Electricity
+    const prevElec = parseFloat(document.getElementById('billPrevReading')?.value) || 0;
+    const currElec = parseFloat(document.getElementById('billCurrReading')?.value) || 0;
+    const elecRate = parseFloat(document.getElementById('billElecRate')?.value) || 0;
+    const prevElecDate = document.getElementById('billPrevReadingDate')?.value || '';
+    const currElecDate = document.getElementById('billCurrReadingDate')?.value || '';
 
-    const unitsConsumed = Math.max(0, curr - prev);
-    let elecCharge = unitsConsumed * rate;
+    const elecDays = calculateMeterDays(prevElecDate, currElecDate);
+    const elecBadge = document.getElementById('billElecDaysBadge');
+    if (elecBadge) {
+      elecBadge.textContent = elecDays !== null ? `${elecDays} Days` : 'Period N/A';
+    }
+
+    const elecWarning = document.getElementById('billElecDateWarning');
+    if (elecWarning) {
+      if (prevElecDate && currElecDate && currElecDate < prevElecDate) {
+        elecWarning.style.display = 'block';
+        elecWarning.textContent = 'Warning: Current Reading Date is earlier than Previous Reading Date!';
+      } else {
+        elecWarning.style.display = 'none';
+      }
+    }
+
+    const unitsConsumed = Math.max(0, currElec - prevElec);
+    let elecCharge = unitsConsumed * elecRate;
     const eType = tenant ? (tenant.electricityBillType || 'perUnit') : 'perUnit';
     if (eType === 'fixed') {
       elecCharge = Number(tenant.electricityFixedAmount) || 0;
@@ -3980,138 +4139,300 @@
       elecCharge = 0;
       document.getElementById('billElecPreviewText').textContent = `Electricity: Not Applicable (₹0.00)`;
     } else {
-      document.getElementById('billElecPreviewText').textContent = `Units Consumed: ${unitsConsumed} • Electricity Total: ₹${elecCharge.toFixed(2)}`;
+      const periodStr = (prevElecDate && currElecDate)
+        ? ` • Period: ${formatShortBillDate(prevElecDate)} → ${formatShortBillDate(currElecDate)}${elecDays !== null ? ` (${elecDays} Days)` : ''}`
+        : '';
+      document.getElementById('billElecPreviewText').textContent = `Units Consumed: ${unitsConsumed}${periodStr} • Total: ₹${elecCharge.toFixed(2)}`;
     }
 
-    const rent = parseFloat(document.getElementById('billRent').value) || 0;
-    const water = parseFloat(document.getElementById('billWater').value) || 0;
-    const parking = parseFloat(document.getElementById('billParking').value) || 0;
-    const maint = parseFloat(document.getElementById('billMaintenance').value) || 0;
-    const prevDue = parseFloat(document.getElementById('billPrevDue').value) || 0;
+    // Water
+    const wType = tenant ? (tenant.waterBillType || (prop?.waterCharge > 0 ? 'fixed' : 'none')) : 'fixed';
+    let waterCharge = 0;
+    const waterMeterSec = document.getElementById('billWaterMeterSection');
+    const waterFixedGrp = document.getElementById('billWaterFixedGroup');
+    const waterBadge = document.getElementById('billWaterTypeBadge');
 
-    const subtotal = rent + elecCharge + water + parking + maint;
+    if (wType === 'perUnit') {
+      if (waterMeterSec) waterMeterSec.style.display = 'block';
+      if (waterFixedGrp) waterFixedGrp.style.display = 'none';
+      if (waterBadge) waterBadge.textContent = 'Metered';
+
+      const prevWater = parseFloat(document.getElementById('billPrevWaterReading')?.value) || 0;
+      const currWater = parseFloat(document.getElementById('billCurrWaterReading')?.value) || 0;
+      const waterRate = parseFloat(document.getElementById('billWaterRate')?.value) || (tenant?.waterRatePerUnit || 0);
+      const prevWaterDate = document.getElementById('billPrevWaterReadingDate')?.value || '';
+      const currWaterDate = document.getElementById('billCurrWaterReadingDate')?.value || '';
+
+      const waterDays = calculateMeterDays(prevWaterDate, currWaterDate);
+      const waterUnits = Math.max(0, currWater - prevWater);
+      waterCharge = waterUnits * waterRate;
+
+      const waterWarning = document.getElementById('billWaterDateWarning');
+      if (waterWarning) {
+        if (prevWaterDate && currWaterDate && currWaterDate < prevWaterDate) {
+          waterWarning.style.display = 'block';
+          waterWarning.textContent = 'Warning: Current Water Reading Date is earlier than Previous Date!';
+        } else {
+          waterWarning.style.display = 'none';
+        }
+      }
+
+      const periodStr = (prevWaterDate && currWaterDate)
+        ? ` • Period: ${formatShortBillDate(prevWaterDate)} → ${formatShortBillDate(currWaterDate)}${waterDays !== null ? ` (${waterDays} Days)` : ''}`
+        : '';
+      document.getElementById('billWaterPreviewText').textContent = `Water Units: ${waterUnits}${periodStr} • Water Total: ₹${waterCharge.toFixed(2)}`;
+      if (document.getElementById('billWater')) {
+        document.getElementById('billWater').value = waterCharge;
+      }
+    } else if (wType === 'none') {
+      if (waterMeterSec) waterMeterSec.style.display = 'none';
+      if (waterFixedGrp) waterFixedGrp.style.display = 'none';
+      if (waterBadge) waterBadge.textContent = 'None';
+      waterCharge = 0;
+      document.getElementById('billWaterPreviewText').textContent = `Water: Not Applicable (₹0.00)`;
+      if (document.getElementById('billWater')) document.getElementById('billWater').value = 0;
+    } else {
+      if (waterMeterSec) waterMeterSec.style.display = 'none';
+      if (waterFixedGrp) waterFixedGrp.style.display = 'block';
+      if (waterBadge) waterBadge.textContent = 'Fixed';
+      waterCharge = parseFloat(document.getElementById('billWater')?.value) || 0;
+      document.getElementById('billWaterPreviewText').textContent = `Fixed Water Total: ₹${waterCharge.toFixed(2)}`;
+    }
+
+    const rent = parseFloat(document.getElementById('billRent')?.value) || 0;
+    const parking = parseFloat(document.getElementById('billParking')?.value) || 0;
+    const maint = parseFloat(document.getElementById('billMaintenance')?.value) || 0;
+    const prevDue = parseFloat(document.getElementById('billPrevDue')?.value) || 0;
+
+    const subtotal = rent + elecCharge + waterCharge + parking + maint;
     const total = subtotal + prevDue;
 
-    document.getElementById('billLiveSubtotal').textContent = `₹${subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
-    document.getElementById('billLiveTotal').textContent = `₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
-  };
+    const elSub = document.getElementById('billLiveSubtotal');
+    const elTot = document.getElementById('billLiveTotal');
+    if (elSub) elSub.textContent = `₹${subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    if (elTot) elTot.textContent = `₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+  }
+
+  window.calculateLiveBill = calculateLiveBill;
 
   window.handleCreateBill = async function (e) {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
     const btn = document.getElementById('createBillSubmitBtn');
-    btn.disabled = true;
-    btn.textContent = 'Generating...';
-
-    const propId = document.getElementById('billPropertySelect').value;
-    const unitId = document.getElementById('billUnitSelect').value;
-    const billingMonth = document.getElementById('billMonth').value;
-    const dueDate = document.getElementById('billDueDate').value;
-
-    const prevReading = parseFloat(document.getElementById('billPrevReading').value) || 0;
-    const currReading = parseFloat(document.getElementById('billCurrReading').value) || 0;
-    const elecRate = parseFloat(document.getElementById('billElecRate').value) || 0;
-    const unitsConsumed = Math.max(0, currReading - prevReading);
-
-    const unit = state.units.find(u => u.id === unitId);
-    const tenant = state.tenants.find(t => t.id === unit.currentTenantId || t.unitId === unit.id);
-    const prop = state.properties.find(p => p.id === propId);
-
-    const eType = tenant ? (tenant.electricityBillType || 'perUnit') : 'perUnit';
-    let elecCharge = unitsConsumed * elecRate;
-    if (eType === 'fixed') {
-      elecCharge = Number(tenant.electricityFixedAmount) || 0;
-    } else if (eType === 'none') {
-      elecCharge = 0;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
     }
 
-    const rent = parseFloat(document.getElementById('billRent').value) || 0;
-    const water = parseFloat(document.getElementById('billWater').value) || 0;
-    const parking = parseFloat(document.getElementById('billParking').value) || 0;
-    const maint = parseFloat(document.getElementById('billMaintenance').value) || 0;
-    const prevDue = parseFloat(document.getElementById('billPrevDue').value) || 0;
+    try {
+      const propId = document.getElementById('billPropertySelect').value;
+      const unitId = document.getElementById('billUnitSelect').value;
+      const billingMonth = document.getElementById('billMonth').value;
+      const dueDate = document.getElementById('billDueDate').value;
 
-    const subtotal = rent + elecCharge + water + parking + maint;
-    const totalAmount = subtotal + prevDue;
+      const unit = state.units.find(u => u.id === unitId);
+      const tenant = state.tenants.find(t => t.id === unit?.currentTenantId || t.unitId === unitId);
+      const prop = state.properties.find(p => p.id === propId);
 
-    const year = new Date().getFullYear();
-    const seq = state.bills.length + 1;
-    const billNumber = `INV-${year}-${String(seq).padStart(5, '0')}`;
-
-    let prevReadingDate = '';
-    if (tenant) {
-      const unitBills = state.bills.filter(b => b.unitId === unitId && b.tenantId === tenant.id);
-      if (unitBills.length > 0) {
-        const sorted = [...unitBills].sort((a, b) => (b.billingMonth || '').localeCompare(a.billingMonth || ''));
-        prevReadingDate = sorted[0].currentMeterReadingDate || (sorted[0].createdAt ? sorted[0].createdAt.split('T')[0] : '');
-      } else {
-        prevReadingDate = tenant.moveInDate || tenant.moveIn || '';
-      }
-    }
-    const currReadingDate = new Date().toISOString().split('T')[0];
-
-    const billData = {
-      ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
-      tenantId: tenant ? tenant.id : '',
-      tenantName: tenant ? tenant.name : 'Tenant',
-      propertyId: propId,
-      propertyName: prop ? prop.name : 'Property',
-      unitId,
-      unitNumber: unit ? unit.number : 'Unit',
-      billNumber,
-      billingMonth,
-      dueDate,
-      previousMeterReading: prevReading,
-      currentMeterReading: currReading,
-      previousMeterReadingDate: prevReadingDate ? prevReadingDate.split('T')[0] : '',
-      currentMeterReadingDate: currReadingDate,
-      electricityUnits: unitsConsumed,
-      electricityRate: elecRate,
-      electricityCharge: elecCharge,
-      electricityBillType: eType,
-      electricityFixedAmount: eType === 'fixed' ? elecCharge : 0,
-      electricityRatePerUnit: elecRate,
-      rent,
-      waterCharge: water,
-      waterBillType: tenant?.waterBillType || (water > 0 ? 'fixed' : 'none'),
-      waterFixedAmount: water,
-      parkingCharge: parking,
-      maintenanceCharge: maint,
-      otherCharges: 0,
-      previousDue: prevDue,
-      subtotal,
-      totalAmount,
-      paidAmount: 0,
-      totalPaymentAllocated: 0,
-      remainingAmount: totalAmount,
-      paymentStatus: 'unpaid',
-      previousDuePaid: 0,
-      previousDueRemaining: prevDue,
-      currentBillPaid: 0,
-      currentBillRemaining: subtotal,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    if (state.currentUser && isFirebaseReady && fbDb) {
-      try {
-        const docRef = await fbDb.collection('bills').add(billData);
-        billData.id = docRef.id;
-      } catch (err) {
-        showToast(`Failed to create bill: ${err.message}`, 'error');
-        btn.disabled = false;
-        btn.textContent = 'Generate & Save Bill';
+      if (!tenant) {
+        showToast('Please select a valid unit with an occupied tenant!', 'error');
         return;
       }
-    } else {
-      billData.id = 'bill_' + Date.now();
-      state.bills.unshift(billData);
-    }
 
-    btn.disabled = false;
-    btn.textContent = 'Generate & Save Bill';
-    closeModal('modalCreateBill');
-    renderBillsTab();
-    showToast(`Bill ${billNumber} generated successfully!`, 'success');
+      // 1. Electricity Readings & Dates
+      const prevReading = parseFloat(document.getElementById('billPrevReading')?.value) || 0;
+      const currReading = parseFloat(document.getElementById('billCurrReading')?.value) || 0;
+      const prevReadingDate = document.getElementById('billPrevReadingDate')?.value || '';
+      const currReadingDate = document.getElementById('billCurrReadingDate')?.value || '';
+      const elecRate = parseFloat(document.getElementById('billElecRate')?.value) || 0;
+
+      if (!currReadingDate) {
+        showToast('Please select the Current Meter Reading Date!', 'error');
+        return;
+      }
+
+      if (prevReadingDate && currReadingDate && currReadingDate < prevReadingDate) {
+        showToast('Current Reading Date cannot be earlier than Previous Reading Date!', 'error');
+        return;
+      }
+
+      if (currReading < prevReading) {
+        showToast(`Current Meter Reading (${currReading}) cannot be less than Previous Reading (${prevReading})!`, 'error');
+        return;
+      }
+
+      const unitsConsumed = Math.max(0, currReading - prevReading);
+      const elecDays = calculateMeterDays(prevReadingDate, currReadingDate);
+
+      const eType = tenant ? (tenant.electricityBillType || 'perUnit') : 'perUnit';
+      let elecCharge = unitsConsumed * elecRate;
+      if (eType === 'fixed') {
+        elecCharge = Number(tenant.electricityFixedAmount) || 0;
+      } else if (eType === 'none') {
+        elecCharge = 0;
+      }
+
+      // 2. Water Readings & Dates
+      const wType = tenant ? (tenant.waterBillType || (prop?.waterCharge > 0 ? 'fixed' : 'none')) : 'fixed';
+      let waterCharge = 0;
+      let prevWaterReading = 0;
+      let currWaterReading = 0;
+      let prevWaterDate = '';
+      let currWaterDate = '';
+      let waterUnits = 0;
+      let waterRate = 0;
+
+      if (wType === 'perUnit') {
+        prevWaterReading = parseFloat(document.getElementById('billPrevWaterReading')?.value) || 0;
+        currWaterReading = parseFloat(document.getElementById('billCurrWaterReading')?.value) || 0;
+        prevWaterDate = document.getElementById('billPrevWaterReadingDate')?.value || '';
+        currWaterDate = document.getElementById('billCurrWaterReadingDate')?.value || '';
+        waterRate = parseFloat(document.getElementById('billWaterRate')?.value) || (tenant.waterRatePerUnit || 0);
+
+        if (prevWaterDate && currWaterDate && currWaterDate < prevWaterDate) {
+          showToast('Current Water Reading Date cannot be earlier than Previous Water Date!', 'error');
+          return;
+        }
+
+        waterUnits = Math.max(0, currWaterReading - prevWaterReading);
+        waterCharge = waterUnits * waterRate;
+      } else if (wType === 'fixed') {
+        waterCharge = parseFloat(document.getElementById('billWater')?.value) || (tenant.waterFixedAmount || 0);
+      } else {
+        waterCharge = 0;
+      }
+
+      const rent = parseFloat(document.getElementById('billRent')?.value) || 0;
+      const parking = parseFloat(document.getElementById('billParking')?.value) || 0;
+      const maint = parseFloat(document.getElementById('billMaintenance')?.value) || 0;
+      const prevDue = parseFloat(document.getElementById('billPrevDue')?.value) || 0;
+
+      const subtotal = rent + elecCharge + waterCharge + parking + maint;
+      const totalAmount = subtotal + prevDue;
+
+      const year = new Date().getFullYear();
+      const seq = state.bills.length + 1;
+      const billNumber = `INV-${year}-${String(seq).padStart(5, '0')}`;
+
+      const billData = {
+        ownerId: state.currentUser ? state.currentUser.uid : 'demo-user-1',
+        tenantId: tenant ? tenant.id : '',
+        tenantName: tenant ? tenant.name : 'Tenant',
+        propertyId: propId,
+        propertyName: prop ? prop.name : 'Property',
+        unitId,
+        unitNumber: unit ? unit.number : 'Unit',
+        billNumber,
+        billingMonth,
+        dueDate,
+        // Electricity
+        previousMeterReading: prevReading,
+        currentMeterReading: currReading,
+        previousMeterReadingDate: prevReadingDate ? prevReadingDate.split('T')[0] : '',
+        currentMeterReadingDate: currReadingDate ? currReadingDate.split('T')[0] : '',
+        electricityUnits: unitsConsumed,
+        electricityRate: elecRate,
+        electricityCharge: elecCharge,
+        electricityBillType: eType,
+        electricityFixedAmount: eType === 'fixed' ? elecCharge : 0,
+        electricityRatePerUnit: elecRate,
+        meterReadingDays: elecDays,
+        // Water
+        waterCharge,
+        waterBillType: wType,
+        waterFixedAmount: wType === 'fixed' ? waterCharge : 0,
+        waterRatePerUnit: waterRate,
+        previousWaterMeterReading: prevWaterReading,
+        previousWaterMeterReadingDate: prevWaterDate ? prevWaterDate.split('T')[0] : '',
+        currentWaterMeterReading: currWaterReading,
+        currentWaterMeterReadingDate: currWaterDate ? currWaterDate.split('T')[0] : '',
+        waterUnits,
+        waterMeterReadingDays: calculateMeterDays(prevWaterDate, currWaterDate),
+        // Other charges
+        rent,
+        parkingCharge: parking,
+        maintenanceCharge: maint,
+        otherCharges: 0,
+        previousDue: prevDue,
+        subtotal,
+        totalAmount,
+        paidAmount: 0,
+        totalPaymentAllocated: 0,
+        remainingAmount: totalAmount,
+        paymentStatus: 'unpaid',
+        previousDuePaid: 0,
+        previousDueRemaining: prevDue,
+        currentBillPaid: 0,
+        currentBillRemaining: subtotal,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (state.currentUser && isFirebaseReady && fbDb) {
+        const batch = fbDb.batch();
+        const docRef = fbDb.collection('bills').doc();
+        billData.id = docRef.id;
+        batch.set(docRef, billData);
+
+        // Record Electricity Meter Reading Record
+        const elecReadingRef = fbDb.collection('meter_readings').doc();
+        batch.set(elecReadingRef, {
+          ownerId: billData.ownerId,
+          tenantId: billData.tenantId,
+          propertyId: billData.propertyId,
+          unitId: billData.unitId,
+          meterType: 'electricity',
+          previousReadingUnits: prevReading,
+          previousReadingDate: prevReadingDate,
+          readingUnits: currReading,
+          currentReadingUnits: currReading,
+          actualReadingDate: currReadingDate,
+          readingDays: elecDays,
+          relatedBillId: billData.id,
+          billingMonth,
+          createdAt: new Date().toISOString()
+        });
+
+        // Record Water Meter Reading Record if applicable
+        if (wType === 'perUnit' || currWaterReading > 0 || currWaterDate) {
+          const waterReadingRef = fbDb.collection('meter_readings').doc();
+          batch.set(waterReadingRef, {
+            ownerId: billData.ownerId,
+            tenantId: billData.tenantId,
+            propertyId: billData.propertyId,
+            unitId: billData.unitId,
+            meterType: 'water',
+            previousReadingUnits: prevWaterReading,
+            previousReadingDate: prevWaterDate,
+            readingUnits: currWaterReading,
+            currentReadingUnits: currWaterReading,
+            actualReadingDate: currWaterDate || currReadingDate,
+            readingDays: calculateMeterDays(prevWaterDate, currWaterDate || currReadingDate),
+            relatedBillId: billData.id,
+            billingMonth,
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        await batch.commit();
+      } else {
+        billData.id = 'bill_' + Date.now();
+      }
+
+      state.bills.unshift(billData);
+      state.bills = decorateAllBillsByTenant(state.bills);
+
+      closeModal('modalCreateBill');
+      renderAllPortalData();
+      showToast(`Bill ${billNumber} generated successfully with reading dates!`, 'success');
+    } catch (err) {
+      console.error('Failed to create bill:', err);
+      showToast(`Failed to create bill: ${err.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Generate & Save Bill';
+      }
+    }
   };
 
   window.openBillDetails = function (billId) {
@@ -4176,7 +4497,9 @@
           <tr style="border-bottom: 1px solid var(--border-subtle);">
             <td style="padding: 10px 12px; font-weight: 600;">
               Electricity Charges
-              <div style="font-size: 0.76rem; color: var(--text-muted);">MTR: ${bill.previousMeterReading || 0} → ${bill.currentMeterReading || 0}</div>
+              <div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">
+                Reading: ${bill.previousMeterReading !== undefined ? bill.previousMeterReading : 0} (${bill.previousMeterReadingDate ? formatShortBillDate(bill.previousMeterReadingDate) : 'N/A'}) → ${bill.currentMeterReading !== undefined ? bill.currentMeterReading : 0} (${bill.currentMeterReadingDate ? formatShortBillDate(bill.currentMeterReadingDate) : 'N/A'})${calculateMeterDays(bill.previousMeterReadingDate, bill.currentMeterReadingDate) !== null ? ` • ${calculateMeterDays(bill.previousMeterReadingDate, bill.currentMeterReadingDate)} Days` : ''}
+              </div>
             </td>
             <td style="padding: 10px 12px; text-align: center; color: var(--text-muted);">
               ${bill.electricityUnits || 0} units @ ₹${bill.electricityRate || 10}/unit
@@ -4185,8 +4508,17 @@
           </tr>
           ${bill.waterCharge > 0 ? `
             <tr style="border-bottom: 1px solid var(--border-subtle);">
-              <td style="padding: 10px 12px; font-weight: 600;">Water Charges</td>
-              <td style="padding: 10px 12px; text-align: center; color: var(--text-muted);">Fixed Monthly</td>
+              <td style="padding: 10px 12px; font-weight: 600;">
+                Water Charges
+                ${bill.waterBillType === 'perUnit' || bill.currentWaterMeterReadingDate ? `
+                  <div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">
+                    Reading: ${bill.previousWaterMeterReading !== undefined ? bill.previousWaterMeterReading : 0} (${bill.previousWaterMeterReadingDate ? formatShortBillDate(bill.previousWaterMeterReadingDate) : 'N/A'}) → ${bill.currentWaterMeterReading !== undefined ? bill.currentWaterMeterReading : 0} (${bill.currentWaterMeterReadingDate ? formatShortBillDate(bill.currentWaterMeterReadingDate) : 'N/A'})${calculateMeterDays(bill.previousWaterMeterReadingDate, bill.currentWaterMeterReadingDate) !== null ? ` • ${calculateMeterDays(bill.previousWaterMeterReadingDate, bill.currentWaterMeterReadingDate)} Days` : ''}
+                  </div>
+                ` : '<div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">Fixed Monthly</div>'}
+              </td>
+              <td style="padding: 10px 12px; text-align: center; color: var(--text-muted);">
+                ${bill.waterBillType === 'perUnit' ? `${bill.waterUnits || bill.electricityUnits || 0} units @ ₹${bill.waterRatePerUnit || 0}/unit` : 'Fixed Monthly'}
+              </td>
               <td style="padding: 10px 12px; text-align: right; font-weight: 600;">₹${Number(bill.waterCharge).toFixed(2)}</td>
             </tr>
           ` : ''}
@@ -4478,9 +4810,9 @@ _Generated via Rentora Platform._`);
 
     let billingPeriodText = '';
     if (bill.previousMeterReadingDate && bill.currentMeterReadingDate) {
-      billingPeriodText = `${formatFullBillDate(bill.previousMeterReadingDate)} to ${formatFullBillDate(bill.currentMeterReadingDate)}`;
+      billingPeriodText = `Reading Period: ${formatFullBillDate(bill.previousMeterReadingDate)} to ${formatFullBillDate(bill.currentMeterReadingDate)}${meterDays !== null ? ` (${meterDays} Days)` : ''}`;
     } else {
-      billingPeriodText = `01 ${formattedBillingMonth} to ${formattedBillingMonth}`;
+      billingPeriodText = `Billing Month: ${formattedBillingMonth}`;
     }
 
     let paymentsList = [];
@@ -5057,12 +5389,34 @@ _Generated via Rentora Platform._`);
             `;
           } else {
             const wRate = bill.waterRatePerUnit || 0;
+            const wCurr = bill.currentWaterMeterReading !== undefined ? bill.currentWaterMeterReading : (bill.currentMeterReading || 0);
+            const wPrev = bill.previousWaterMeterReading !== undefined ? bill.previousWaterMeterReading : (bill.previousMeterReading || 0);
+            const wCurrDate = bill.currentWaterMeterReadingDate || bill.currentMeterReadingDate || '';
+            const wPrevDate = bill.previousWaterMeterReadingDate || bill.previousMeterReadingDate || '';
+            const wDays = calculateMeterDays(wPrevDate, wCurrDate);
+            const wUnits = Number(bill.waterUnits !== undefined ? bill.waterUnits : (bill.electricityUnits || 0));
+
             return `
               <tr class="charges-tr">
-                <td>Water Bill<br><span style="font-size: 8.5px; color: #4b5563; font-weight: 700;">${bill.electricityUnits || 0} Units x ₹${wRate}</span></td>
-                <td class="center-text">-</td>
-                <td class="center-text">-</td>
-                <td class="center-text">-</td>
+                <td>Water Bill<br><span style="font-size: 8.5px; color: #4b5563; font-weight: 700;">${wUnits} Units x ₹${wRate}</span></td>
+                <td class="center-text">
+                  ${wCurr}<br>
+                  <span style="font-size: 8px; color: #4b5563;">
+                    ${wCurrDate ? formatShortBillDate(wCurrDate) : 'N/A'}
+                  </span>
+                </td>
+                <td class="center-text">
+                  ${wPrev}<br>
+                  <span style="font-size: 8px; color: #4b5563;">
+                    ${wPrevDate ? formatShortBillDate(wPrevDate) : 'N/A'}
+                  </span>
+                </td>
+                <td class="center-text">
+                  ${wUnits} Units<br>
+                  <span style="font-size: 8px; color: #4b5563;">
+                    ${wDays !== null ? `(${wDays} Days)` : ''}
+                  </span>
+                </td>
                 <td class="center-text">${wRate}</td>
                 <td class="center-text">-</td>
                 <td class="center-text">-</td>
